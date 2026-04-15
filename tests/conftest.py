@@ -1,10 +1,26 @@
 """Shared test fixtures."""
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
+from app.core.config import get_settings
 from app.main import app
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def configure_test_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
+    runtime_root = tmp_path / "runtime"
+    monkeypatch.setenv("MY_FI_ENVIRONMENT", "test")
+    monkeypatch.setenv("MY_FI_DATA_DIR", str(runtime_root / "data"))
+    monkeypatch.setenv("MY_FI_UPLOADS_DIR", str(runtime_root / "data" / "uploads"))
+    monkeypatch.setenv("MY_FI_QUARANTINE_DIR", str(runtime_root / "data" / "quarantine"))
+    monkeypatch.setenv("MY_FI_STORAGE_DIR", str(runtime_root / "storage"))
+    monkeypatch.setenv("MY_FI_TEST_FIXTURES_DIR", str(runtime_root / "tests" / "fixtures"))
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture

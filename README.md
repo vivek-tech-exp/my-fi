@@ -16,7 +16,7 @@ This repository is being built in small vertical slices.
 * feature development should happen on short-lived branches
 * changes should merge back to `master` through pull requests
 
-The first execution milestone is `P0: Bootstrap the runnable service`.
+The current completed milestone is `P0: Bootstrap the runnable service`.
 
 ## Project Overview
 
@@ -30,7 +30,7 @@ The service will:
 * build a canonical transaction ledger
 * validate imports before they are trusted
 
-The first milestone in this branch establishes the runnable FastAPI foundation and local development workflow.
+The current branch-by-branch roadmap starts with the FastAPI foundation and then layers in uploads, persistence, parsing, and validation.
 
 ## Tech Stack
 
@@ -98,6 +98,28 @@ Then open:
 * Swagger UI: `http://127.0.0.1:8000/docs`
 * OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
 * Health check: `http://127.0.0.1:8000/health`
+
+## Current API Surface
+
+Available now:
+
+* `GET /`
+* `GET /health`
+* `POST /imports/csv`
+
+The upload endpoint accepts:
+
+* multipart `file`
+* `bank_name`
+* optional `account_id`
+
+Current supported bank names:
+
+* `hdfc`
+* `kotak`
+* `federal`
+
+At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, and returns structured metadata. Import registry, idempotency, and parsing arrive in the next milestones.
 
 ## Quality Checks
 

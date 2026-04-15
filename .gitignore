@@ -205,3 +205,17 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project runtime storage
+data/uploads/*
+!data/uploads/.gitkeep
+data/quarantine/*
+!data/quarantine/.gitkeep
+storage/*
+!storage/.gitkeep
+
+# Local database artifacts
+*.duckdb
+*.duckdb-wal
+*.db
+*.db-wal

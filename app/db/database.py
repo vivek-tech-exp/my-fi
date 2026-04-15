@@ -31,6 +31,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS source_files_file_hash_idx
 ON source_files(file_hash);
 """
 
+RAW_ROWS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS raw_rows (
+    raw_row_id VARCHAR PRIMARY KEY,
+    file_id VARCHAR NOT NULL,
+    row_number INTEGER NOT NULL,
+    parser_name VARCHAR NOT NULL,
+    parser_version VARCHAR NOT NULL,
+    row_type VARCHAR NOT NULL,
+    raw_text VARCHAR NOT NULL,
+    normalized_text VARCHAR,
+    raw_payload VARCHAR,
+    rejection_reason VARCHAR,
+    header_row BOOLEAN NOT NULL DEFAULT FALSE,
+    repaired_row BOOLEAN NOT NULL DEFAULT FALSE
+);
+"""
+
+RAW_ROWS_FILE_ID_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS raw_rows_file_id_idx
+ON raw_rows(file_id, row_number);
+"""
+
 
 @contextmanager
 def database_connection() -> Iterator[duckdb.DuckDBPyConnection]:
@@ -50,3 +72,5 @@ def initialize_database() -> None:
     with database_connection() as connection:
         connection.execute(SOURCE_FILES_TABLE_SQL)
         connection.execute(SOURCE_FILES_FILE_HASH_INDEX_SQL)
+        connection.execute(RAW_ROWS_TABLE_SQL)
+        connection.execute(RAW_ROWS_FILE_ID_INDEX_SQL)

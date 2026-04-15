@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.models.parsing import RawRowAuditSummary
+
 
 class BankName(StrEnum):
     """Supported banks for V1 ingestion."""
@@ -66,9 +68,13 @@ class UploadCsvResponse(BaseModel):
     stored_path: str
     file_size_bytes: int = Field(ge=1)
     parser_version: str
+    parser_name: str
     status: ImportStatus
     encoding_detected: str | None = None
     delimiter_detected: str | None = None
+    header_detected: bool = False
+    raw_rows_recorded: int = Field(default=0, ge=0)
+    suspicious_rows_recorded: int = Field(default=0, ge=0)
     uploaded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     message: str
 
@@ -77,9 +83,12 @@ class UploadCsvResponse(BaseModel):
         cls,
         record: SourceFileRecord,
         *,
+        parser_name: str,
+        audit_summary: RawRowAuditSummary | None = None,
         duplicate_file: bool = False,
         message: str,
     ) -> "UploadCsvResponse":
+        raw_row_summary = audit_summary or RawRowAuditSummary()
         return cls(
             file_id=record.file_id,
             file_hash=record.file_hash,
@@ -90,9 +99,13 @@ class UploadCsvResponse(BaseModel):
             stored_path=record.stored_path,
             file_size_bytes=record.file_size_bytes,
             parser_version=record.parser_version,
+            parser_name=parser_name,
             status=record.import_status,
             encoding_detected=record.encoding_detected,
             delimiter_detected=record.delimiter_detected,
+            header_detected=raw_row_summary.header_detected,
+            raw_rows_recorded=raw_row_summary.raw_rows_recorded,
+            suspicious_rows_recorded=raw_row_summary.suspicious_rows_recorded,
             uploaded_at=record.uploaded_at,
             message=message,
         )

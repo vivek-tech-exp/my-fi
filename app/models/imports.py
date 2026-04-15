@@ -49,6 +49,7 @@ class UploadCsvResponse(BaseModel):
 
     file_id: UUID
     file_hash: str = Field(min_length=64, max_length=64)
+    duplicate_file: bool = False
     bank_name: BankName
     account_id: str | None = None
     original_filename: str
@@ -64,11 +65,13 @@ class UploadCsvResponse(BaseModel):
         cls,
         record: SourceFileRecord,
         *,
+        duplicate_file: bool = False,
         message: str,
     ) -> "UploadCsvResponse":
         return cls(
             file_id=record.file_id,
             file_hash=record.file_hash,
+            duplicate_file=duplicate_file,
             bank_name=record.bank_name,
             account_id=record.account_id,
             original_filename=record.original_filename,

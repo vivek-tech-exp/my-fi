@@ -1,6 +1,7 @@
 """Repository helpers for the source file registry."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from typing import cast
 from uuid import UUID
 
 import duckdb
@@ -26,6 +27,26 @@ SELECT
     delimiter_detected
 FROM source_files
 WHERE file_id = ?
+"""
+
+SOURCE_FILE_BY_HASH_SELECT_SQL = """
+SELECT
+    file_id,
+    original_filename,
+    stored_path,
+    bank_name,
+    account_id,
+    file_hash,
+    file_size_bytes,
+    uploaded_at,
+    parser_version,
+    import_status,
+    statement_start_date,
+    statement_end_date,
+    encoding_detected,
+    delimiter_detected
+FROM source_files
+WHERE file_hash = ?
 """
 
 
@@ -87,26 +108,57 @@ def get_source_file_by_id(
     return _fetch_source_file(connection, file_id)
 
 
+def get_source_file_by_hash(
+    file_hash: str,
+    *,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> SourceFileRecord | None:
+    """Fetch a source file registry row by file hash, if it exists."""
+
+    if connection is None:
+        with database_connection() as new_connection:
+            return _fetch_source_file_by_hash(new_connection, file_hash)
+
+    return _fetch_source_file_by_hash(connection, file_hash)
+
+
 def _fetch_source_file(connection: duckdb.DuckDBPyConnection, file_id: UUID) -> SourceFileRecord:
     row = connection.execute(SOURCE_FILE_SELECT_SQL, [str(file_id)]).fetchone()
     if row is None:
         raise LookupError(f"Source file '{file_id}' was not found.")
 
-    return SourceFileRecord(
-        file_id=row[0],
-        original_filename=row[1],
-        stored_path=row[2],
-        bank_name=row[3],
-        account_id=row[4],
-        file_hash=row[5],
-        file_size_bytes=row[6],
-        uploaded_at=_with_utc_timezone(row[7]),
-        parser_version=row[8],
-        import_status=row[9],
-        statement_start_date=row[10],
-        statement_end_date=row[11],
-        encoding_detected=row[12],
-        delimiter_detected=row[13],
+    return _row_to_source_file_record(row)
+
+
+def _fetch_source_file_by_hash(
+    connection: duckdb.DuckDBPyConnection,
+    file_hash: str,
+) -> SourceFileRecord | None:
+    row = connection.execute(SOURCE_FILE_BY_HASH_SELECT_SQL, [file_hash]).fetchone()
+    if row is None:
+        return None
+
+    return _row_to_source_file_record(row)
+
+
+def _row_to_source_file_record(row: tuple[object, ...]) -> SourceFileRecord:
+    return SourceFileRecord.model_validate(
+        {
+            "file_id": cast(str, row[0]),
+            "original_filename": cast(str, row[1]),
+            "stored_path": cast(str, row[2]),
+            "bank_name": cast(str, row[3]),
+            "account_id": cast(str | None, row[4]),
+            "file_hash": cast(str, row[5]),
+            "file_size_bytes": cast(int, row[6]),
+            "uploaded_at": _with_utc_timezone(cast(datetime, row[7])),
+            "parser_version": cast(str, row[8]),
+            "import_status": cast(str, row[9]),
+            "statement_start_date": cast(date | None, row[10]),
+            "statement_end_date": cast(date | None, row[11]),
+            "encoding_detected": cast(str | None, row[12]),
+            "delimiter_detected": cast(str | None, row[13]),
+        }
     )
 
 

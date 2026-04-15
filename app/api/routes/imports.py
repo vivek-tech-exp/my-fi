@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile, status
 
 from app.models.imports import BankName, UploadCsvResponse
 from app.services.imports import store_uploaded_csv
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/imports", tags=["imports"])
     summary="Upload a bank CSV file",
 )
 async def upload_csv(
+    response: Response,
     file: Annotated[UploadFile, File(description="CSV file to ingest")],
     bank_name: Annotated[BankName, Form(description="Bank that produced the export")],
     account_id: Annotated[str | None, Form(description="Optional account identifier")] = None,
@@ -40,9 +41,13 @@ async def upload_csv(
 
     normalized_account_id = account_id.strip() or None if account_id else None
 
-    return store_uploaded_csv(
+    upload_response = store_uploaded_csv(
         file_bytes=file_bytes,
         original_filename=file.filename,
         bank_name=bank_name,
         account_id=normalized_account_id,
     )
+    response.status_code = (
+        status.HTTP_200_OK if upload_response.duplicate_file else status.HTTP_201_CREATED
+    )
+    return upload_response

@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS source_files (
 );
 """
 
+SOURCE_FILES_FILE_HASH_INDEX_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS source_files_file_hash_idx
+ON source_files(file_hash);
+"""
+
 
 @contextmanager
 def database_connection() -> Iterator[duckdb.DuckDBPyConnection]:
@@ -44,3 +49,4 @@ def initialize_database() -> None:
 
     with database_connection() as connection:
         connection.execute(SOURCE_FILES_TABLE_SQL)
+        connection.execute(SOURCE_FILES_FILE_HASH_INDEX_SQL)

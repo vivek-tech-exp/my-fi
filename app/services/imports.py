@@ -1,12 +1,14 @@
 """Services for source-file intake and local storage."""
 
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from re import sub
 from uuid import uuid4
 
 from app.core.config import get_settings
-from app.models.imports import BankName, ImportStatus, UploadCsvResponse
+from app.db.source_files import insert_source_file
+from app.models.imports import BankName, ImportStatus, SourceFileRecord, UploadCsvResponse
 
 
 def store_uploaded_csv(
@@ -20,24 +22,37 @@ def store_uploaded_csv(
 
     settings = get_settings()
     file_hash = sha256(file_bytes).hexdigest()
+    file_id = uuid4()
     sanitized_filename = _sanitize_filename(original_filename)
     destination_dir = settings.uploads_dir / bank_name.value / file_hash[:2]
     destination_dir.mkdir(parents=True, exist_ok=True)
     stored_path = destination_dir / f"{file_hash}__{sanitized_filename}"
     stored_path.write_bytes(file_bytes)
 
-    return UploadCsvResponse(
-        file_id=uuid4(),
-        file_hash=file_hash,
-        bank_name=bank_name,
-        account_id=account_id,
+    source_file = SourceFileRecord(
+        file_id=file_id,
         original_filename=original_filename,
         stored_path=str(stored_path),
+        bank_name=bank_name,
+        account_id=account_id,
+        file_hash=file_hash,
         file_size_bytes=len(file_bytes),
-        status=ImportStatus.RECEIVED,
+        uploaded_at=datetime.now(UTC),
+        parser_version=settings.default_parser_version,
+        import_status=ImportStatus.RECEIVED,
+    )
+
+    try:
+        persisted_record = insert_source_file(source_file)
+    except Exception:
+        stored_path.unlink(missing_ok=True)
+        raise
+
+    return UploadCsvResponse.from_source_file_record(
+        persisted_record,
         message=(
-            "File stored locally. Import registry, idempotency, and parsing "
-            "will be added in subsequent milestones."
+            "File stored locally and registered for processing. Idempotency, "
+            "parsing, and validation will be added in subsequent milestones."
         ),
     )
 

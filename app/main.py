@@ -8,12 +8,14 @@ from fastapi import FastAPI
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.runtime import ensure_directories
+from app.db.database import initialize_database
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     ensure_directories(settings.required_directories)
+    initialize_database()
     yield
 
 

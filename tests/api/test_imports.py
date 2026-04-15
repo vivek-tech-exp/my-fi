@@ -3,10 +3,15 @@
 from hashlib import sha256
 from pathlib import Path
 
+import duckdb
+from app.core.config import Settings
 from fastapi.testclient import TestClient
 
 
-def test_upload_csv_persists_file_and_returns_metadata(client: TestClient) -> None:
+def test_upload_csv_persists_file_and_returns_metadata(
+    client: TestClient,
+    settings: Settings,
+) -> None:
     file_bytes = b"Date,Narration,Debit,Credit,Balance\n2026-04-01,Salary,,1000.00,1000.00\n"
 
     response = client.post(
@@ -24,12 +29,49 @@ def test_upload_csv_persists_file_and_returns_metadata(client: TestClient) -> No
     assert payload["original_filename"] == "salary_statement.csv"
     assert payload["file_hash"] == sha256(file_bytes).hexdigest()
     assert payload["file_size_bytes"] == len(file_bytes)
+    assert payload["parser_version"] == settings.default_parser_version
     assert payload["status"] == "RECEIVED"
-    assert payload["message"].startswith("File stored locally.")
+    assert payload["message"].startswith("File stored locally and registered")
     assert stored_path.exists()
     assert stored_path.read_bytes() == file_bytes
     assert "hdfc" in stored_path.parts
     assert stored_path.name.startswith(payload["file_hash"])
+
+    with duckdb.connect(str(settings.database_path), read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                bank_name,
+                account_id,
+                original_filename,
+                stored_path,
+                file_hash,
+                file_size_bytes,
+                parser_version,
+                import_status,
+                statement_start_date,
+                statement_end_date,
+                encoding_detected,
+                delimiter_detected
+            FROM source_files
+            WHERE file_id = ?
+            """,
+            [payload["file_id"]],
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == "hdfc"
+    assert row[1] == "primary-checking"
+    assert row[2] == "salary_statement.csv"
+    assert row[3] == payload["stored_path"]
+    assert row[4] == payload["file_hash"]
+    assert row[5] == len(file_bytes)
+    assert row[6] == settings.default_parser_version
+    assert row[7] == "RECEIVED"
+    assert row[8] is None
+    assert row[9] is None
+    assert row[10] is None
+    assert row[11] is None
 
 
 def test_upload_csv_rejects_empty_files(client: TestClient) -> None:
@@ -51,3 +93,14 @@ def test_upload_csv_rejects_unknown_bank_name(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_upload_csv_creates_database_file(client: TestClient, settings: Settings) -> None:
+    response = client.post(
+        "/imports/csv",
+        data={"bank_name": "federal"},
+        files={"file": ("statement.csv", b"header\nrow\n", "text/csv")},
+    )
+
+    assert response.status_code == 201
+    assert settings.database_path.exists()

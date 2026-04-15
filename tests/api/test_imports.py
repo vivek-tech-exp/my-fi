@@ -32,7 +32,9 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert payload["file_size_bytes"] == len(file_bytes)
     assert payload["parser_version"] == settings.default_parser_version
     assert payload["status"] == "RECEIVED"
-    assert payload["message"].startswith("File stored locally and registered")
+    assert payload["encoding_detected"] == "utf-8"
+    assert payload["delimiter_detected"] == ","
+    assert payload["message"].startswith("File stored locally, normalized")
     assert stored_path.exists()
     assert stored_path.read_bytes() == file_bytes
     assert "hdfc" in stored_path.parts
@@ -71,8 +73,8 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert row[7] == "RECEIVED"
     assert row[8] is None
     assert row[9] is None
-    assert row[10] is None
-    assert row[11] is None
+    assert row[10] == "utf-8"
+    assert row[11] == ","
 
 
 def test_upload_csv_rejects_empty_files(client: TestClient) -> None:
@@ -135,6 +137,8 @@ def test_upload_csv_returns_existing_record_for_duplicate_file(
     assert second_payload["file_hash"] == first_payload["file_hash"]
     assert second_payload["stored_path"] == first_payload["stored_path"]
     assert second_payload["account_id"] == "primary-checking"
+    assert second_payload["encoding_detected"] == "utf-8"
+    assert second_payload["delimiter_detected"] == ","
     assert second_payload["message"].startswith("Matching file already registered.")
 
     with duckdb.connect(str(settings.database_path), read_only=True) as connection:
@@ -142,3 +146,26 @@ def test_upload_csv_returns_existing_record_for_duplicate_file(
 
     assert row_count is not None
     assert row_count[0] == 1
+
+
+def test_upload_csv_quarantines_unreadable_files(client: TestClient) -> None:
+    unreadable_bytes = b"\x81\x8d\x8f\x90"
+
+    response = client.post(
+        "/imports/csv",
+        data={"bank_name": "kotak"},
+        files={"file": ("broken_statement.csv", unreadable_bytes, "text/csv")},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    stored_path = Path(payload["stored_path"])
+
+    assert payload["status"] == "FAIL_NEEDS_REVIEW"
+    assert payload["encoding_detected"] is None
+    assert payload["delimiter_detected"] is None
+    assert payload["duplicate_file"] is False
+    assert payload["message"].startswith("File was quarantined")
+    assert "quarantine" in stored_path.parts
+    assert stored_path.exists()
+    assert stored_path.read_bytes() == unreadable_bytes

@@ -16,7 +16,7 @@ This repository is being built in small vertical slices.
 * feature development should happen on short-lived branches
 * changes should merge back to `master` through pull requests
 
-The current completed milestone on `master` is `P1: Upload API and local file storage`.
+The current completed milestone on `master` is `P3: file-hash idempotency`.
 
 ## Project Overview
 
@@ -130,6 +130,14 @@ Re-uploading the same file content is idempotent:
 * no second registry row is created
 * no second stored file is written
 
+Uploads now also run through pre-parse normalization before later parser work:
+
+* file encoding is detected when possible
+* UTF-8 BOM is stripped during normalization
+* line endings are normalized to `\n`
+* CSV delimiter is detected when possible
+* unreadable files are quarantined and marked `FAIL_NEEDS_REVIEW`
+
 The registry currently tracks:
 
 * file identity and hash metadata
@@ -137,6 +145,7 @@ The registry currently tracks:
 * parser version
 * placeholder fields for statement and file-detection metadata
 * duplicate-file detection at the file hash level
+* detected file encoding and delimiter metadata
 
 ## Quality Checks
 

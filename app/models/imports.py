@@ -44,6 +44,16 @@ class SourceFileRecord(BaseModel):
     delimiter_detected: str | None = None
 
 
+class PreParseNormalizationResult(BaseModel):
+    """Normalized text and metadata derived from the raw uploaded file."""
+
+    normalized_text: str | None = None
+    encoding_detected: str | None = None
+    delimiter_detected: str | None = None
+    quarantine_required: bool = False
+    failure_reason: str | None = None
+
+
 class UploadCsvResponse(BaseModel):
     """Structured response for a stored CSV upload."""
 
@@ -57,6 +67,8 @@ class UploadCsvResponse(BaseModel):
     file_size_bytes: int = Field(ge=1)
     parser_version: str
     status: ImportStatus
+    encoding_detected: str | None = None
+    delimiter_detected: str | None = None
     uploaded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     message: str
 
@@ -79,6 +91,8 @@ class UploadCsvResponse(BaseModel):
             file_size_bytes=record.file_size_bytes,
             parser_version=record.parser_version,
             status=record.import_status,
+            encoding_detected=record.encoding_detected,
+            delimiter_detected=record.delimiter_detected,
             uploaded_at=record.uploaded_at,
             message=message,
         )

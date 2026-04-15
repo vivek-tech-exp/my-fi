@@ -16,7 +16,7 @@ This repository is being built in small vertical slices.
 * feature development should happen on short-lived branches
 * changes should merge back to `master` through pull requests
 
-The current completed milestone on `master` is `P3: file-hash idempotency`.
+The current completed milestone on `master` is `P5: parser framework and raw-row audit trail`.
 
 ## Project Overview
 
@@ -51,6 +51,7 @@ app/
   core/
   db/
   models/
+  parsers/
   services/
 data/
   uploads/
@@ -122,7 +123,7 @@ Current supported bank names:
 * `kotak`
 * `federal`
 
-At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, persists a `source_files` registry row in DuckDB, and returns structured metadata.
+At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, persists a `source_files` registry row in DuckDB, runs the bank parser scaffolding, and returns structured metadata.
 
 Re-uploading the same file content is idempotent:
 
@@ -138,6 +139,14 @@ Uploads now also run through pre-parse normalization before later parser work:
 * CSV delimiter is detected when possible
 * unreadable files are quarantined and marked `FAIL_NEEDS_REVIEW`
 
+Each readable upload now also leaves a raw-row audit trail:
+
+* the parser is selected per bank
+* header rows are detected and marked as ignored audit rows
+* data rows are classified as `accepted`, `ignored`, or `suspicious`
+* every inspected row is persisted in the `raw_rows` DuckDB table
+* raw row payloads, parser name, parser version, and rejection reasons are preserved for later debugging
+
 The registry currently tracks:
 
 * file identity and hash metadata
@@ -146,6 +155,14 @@ The registry currently tracks:
 * placeholder fields for statement and file-detection metadata
 * duplicate-file detection at the file hash level
 * detected file encoding and delimiter metadata
+
+The parser audit trail currently tracks:
+
+* parser name and parser version
+* row number and raw row text
+* parsed row payload
+* header-row detection
+* suspicious-row reasons for pre-header or malformed rows
 
 ## Quality Checks
 

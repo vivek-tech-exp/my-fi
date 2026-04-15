@@ -1,5 +1,6 @@
 """Tests for the CSV upload endpoint."""
 
+import json
 from hashlib import sha256
 from pathlib import Path
 
@@ -31,10 +32,14 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert payload["duplicate_file"] is False
     assert payload["file_size_bytes"] == len(file_bytes)
     assert payload["parser_version"] == settings.default_parser_version
+    assert payload["parser_name"] == "hdfc_csv_parser"
     assert payload["status"] == "RECEIVED"
     assert payload["encoding_detected"] == "utf-8"
     assert payload["delimiter_detected"] == ","
-    assert payload["message"].startswith("File stored locally, normalized")
+    assert payload["header_detected"] is True
+    assert payload["raw_rows_recorded"] == 2
+    assert payload["suspicious_rows_recorded"] == 0
+    assert payload["message"].startswith("File stored locally, raw rows were audited")
     assert stored_path.exists()
     assert stored_path.read_bytes() == file_bytes
     assert "hdfc" in stored_path.parts
@@ -75,6 +80,46 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert row[9] is None
     assert row[10] == "utf-8"
     assert row[11] == ","
+
+    with duckdb.connect(str(settings.database_path), read_only=True) as connection:
+        raw_rows = connection.execute(
+            """
+            SELECT
+                row_number,
+                parser_name,
+                parser_version,
+                row_type,
+                raw_text,
+                raw_payload,
+                rejection_reason,
+                header_row,
+                repaired_row
+            FROM raw_rows
+            WHERE file_id = ?
+            ORDER BY row_number
+            """,
+            [payload["file_id"]],
+        ).fetchall()
+
+    assert len(raw_rows) == 2
+    assert raw_rows[0][0] == 1
+    assert raw_rows[0][1] == "hdfc_csv_parser"
+    assert raw_rows[0][2] == settings.default_parser_version
+    assert raw_rows[0][3] == "ignored"
+    assert raw_rows[0][4] == "Date,Narration,Debit,Credit,Balance"
+    assert json.loads(raw_rows[0][5]) == ["Date", "Narration", "Debit", "Credit", "Balance"]
+    assert raw_rows[0][6] == "header_row"
+    assert raw_rows[0][7] is True
+    assert raw_rows[0][8] is False
+
+    assert raw_rows[1][0] == 2
+    assert raw_rows[1][1] == "hdfc_csv_parser"
+    assert raw_rows[1][3] == "accepted"
+    assert raw_rows[1][4] == "2026-04-01,Salary,,1000.00,1000.00"
+    assert json.loads(raw_rows[1][5]) == ["2026-04-01", "Salary", "", "1000.00", "1000.00"]
+    assert raw_rows[1][6] is None
+    assert raw_rows[1][7] is False
+    assert raw_rows[1][8] is False
 
 
 def test_upload_csv_rejects_empty_files(client: TestClient) -> None:
@@ -137,15 +182,22 @@ def test_upload_csv_returns_existing_record_for_duplicate_file(
     assert second_payload["file_hash"] == first_payload["file_hash"]
     assert second_payload["stored_path"] == first_payload["stored_path"]
     assert second_payload["account_id"] == "primary-checking"
+    assert second_payload["parser_name"] == "hdfc_csv_parser"
     assert second_payload["encoding_detected"] == "utf-8"
     assert second_payload["delimiter_detected"] == ","
+    assert second_payload["header_detected"] is True
+    assert second_payload["raw_rows_recorded"] == 2
+    assert second_payload["suspicious_rows_recorded"] == 0
     assert second_payload["message"].startswith("Matching file already registered.")
 
     with duckdb.connect(str(settings.database_path), read_only=True) as connection:
         row_count = connection.execute("SELECT COUNT(*) FROM source_files").fetchone()
+        raw_row_count = connection.execute("SELECT COUNT(*) FROM raw_rows").fetchone()
 
     assert row_count is not None
     assert row_count[0] == 1
+    assert raw_row_count is not None
+    assert raw_row_count[0] == 2
 
 
 def test_upload_csv_quarantines_unreadable_files(client: TestClient) -> None:
@@ -161,11 +213,60 @@ def test_upload_csv_quarantines_unreadable_files(client: TestClient) -> None:
     payload = response.json()
     stored_path = Path(payload["stored_path"])
 
+    assert payload["parser_name"] == "kotak_csv_parser"
     assert payload["status"] == "FAIL_NEEDS_REVIEW"
     assert payload["encoding_detected"] is None
     assert payload["delimiter_detected"] is None
+    assert payload["header_detected"] is False
+    assert payload["raw_rows_recorded"] == 0
+    assert payload["suspicious_rows_recorded"] == 0
     assert payload["duplicate_file"] is False
     assert payload["message"].startswith("File was quarantined")
     assert "quarantine" in stored_path.parts
     assert stored_path.exists()
     assert stored_path.read_bytes() == unreadable_bytes
+
+
+def test_upload_csv_flags_pre_header_rows_for_review(
+    client: TestClient,
+    settings: Settings,
+) -> None:
+    file_bytes = (
+        b"Statement Period: 01 Apr 2026 to 30 Apr 2026\n"
+        b"Date,Narration,Debit,Credit,Balance\n"
+        b"2026-04-01,Salary,,1000.00,1000.00\n"
+    )
+
+    response = client.post(
+        "/imports/csv",
+        data={"bank_name": "hdfc"},
+        files={"file": ("statement_with_title.csv", file_bytes, "text/csv")},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+
+    assert payload["parser_name"] == "hdfc_csv_parser"
+    assert payload["header_detected"] is True
+    assert payload["raw_rows_recorded"] == 3
+    assert payload["suspicious_rows_recorded"] == 1
+    assert payload["message"].startswith(
+        "File stored locally, raw rows were audited, and suspicious"
+    )
+
+    with duckdb.connect(str(settings.database_path), read_only=True) as connection:
+        raw_rows = connection.execute(
+            """
+            SELECT row_number, row_type, rejection_reason, header_row
+            FROM raw_rows
+            WHERE file_id = ?
+            ORDER BY row_number
+            """,
+            [payload["file_id"]],
+        ).fetchall()
+
+    assert raw_rows == [
+        (1, "suspicious", "content_before_header", False),
+        (2, "ignored", "header_row", True),
+        (3, "accepted", None, False),
+    ]

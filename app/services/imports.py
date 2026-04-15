@@ -4,11 +4,16 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from re import sub
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.core.config import get_settings
+from app.db.database import database_connection
+from app.db.raw_rows import get_raw_row_audit_summary, insert_raw_rows
 from app.db.source_files import get_source_file_by_hash, insert_source_file
 from app.models.imports import BankName, ImportStatus, SourceFileRecord, UploadCsvResponse
+from app.models.parsing import ParserInspectionResult
+from app.parsers import get_bank_parser
+from app.parsers.base import BaseCsvParser
 from app.services.normalization import normalize_uploaded_csv
 
 
@@ -22,11 +27,21 @@ def store_uploaded_csv(
     """Persist an uploaded CSV file and return its initial import metadata."""
 
     settings = get_settings()
+    parser = get_bank_parser(
+        bank_name=bank_name,
+        parser_version=settings.default_parser_version,
+    )
     file_hash = sha256(file_bytes).hexdigest()
     existing_record = get_source_file_by_hash(file_hash)
     if existing_record is not None:
+        existing_parser = get_bank_parser(
+            bank_name=existing_record.bank_name,
+            parser_version=existing_record.parser_version,
+        )
         return UploadCsvResponse.from_source_file_record(
             existing_record,
+            parser_name=existing_parser.parser_name,
+            audit_summary=get_raw_row_audit_summary(existing_record.file_id),
             duplicate_file=True,
             message="Matching file already registered. Returning existing import metadata.",
         )
@@ -53,7 +68,7 @@ def store_uploaded_csv(
         file_hash=file_hash,
         file_size_bytes=len(file_bytes),
         uploaded_at=datetime.now(UTC),
-        parser_version=settings.default_parser_version,
+        parser_version=parser.parser_version,
         import_status=(
             ImportStatus.FAIL_NEEDS_REVIEW
             if normalization_result.quarantine_required
@@ -62,17 +77,41 @@ def store_uploaded_csv(
         encoding_detected=normalization_result.encoding_detected,
         delimiter_detected=normalization_result.delimiter_detected,
     )
+    inspection_result = ParserInspectionResult(
+        parser_name=parser.parser_name,
+        parser_version=parser.parser_version,
+    )
 
     try:
-        persisted_record = insert_source_file(source_file)
+        with database_connection() as connection:
+            connection.execute("BEGIN TRANSACTION")
+            try:
+                persisted_record = insert_source_file(source_file, connection=connection)
+                inspection_result = _inspect_normalized_file(
+                    file_id=file_id,
+                    parser=parser,
+                    normalized_text=normalization_result.normalized_text,
+                    delimiter=normalization_result.delimiter_detected,
+                )
+                insert_raw_rows(inspection_result.raw_rows, connection=connection)
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
     except Exception:
         existing_record = get_source_file_by_hash(file_hash)
         if existing_record is not None:
+            existing_parser = get_bank_parser(
+                bank_name=existing_record.bank_name,
+                parser_version=existing_record.parser_version,
+            )
             if stored_path != Path(existing_record.stored_path):
                 stored_path.unlink(missing_ok=True)
 
             return UploadCsvResponse.from_source_file_record(
                 existing_record,
+                parser_name=existing_parser.parser_name,
+                audit_summary=get_raw_row_audit_summary(existing_record.file_id),
                 duplicate_file=True,
                 message="Matching file already registered. Returning existing import metadata.",
             )
@@ -82,8 +121,13 @@ def store_uploaded_csv(
 
     return UploadCsvResponse.from_source_file_record(
         persisted_record,
+        parser_name=parser.parser_name,
+        audit_summary=inspection_result,
         duplicate_file=False,
-        message=_build_upload_message(normalization_result.quarantine_required),
+        message=_build_upload_message(
+            quarantine_required=normalization_result.quarantine_required,
+            inspection_result=inspection_result,
+        ),
     )
 
 
@@ -98,14 +142,44 @@ def _sanitize_filename(filename: str) -> str:
     return cleaned_name.strip("._") or "upload.csv"
 
 
-def _build_upload_message(quarantine_required: bool) -> str:
+def _inspect_normalized_file(
+    *,
+    file_id: UUID,
+    parser: BaseCsvParser,
+    normalized_text: str | None,
+    delimiter: str | None,
+) -> ParserInspectionResult:
+    if normalized_text is None:
+        return ParserInspectionResult(
+            parser_name=parser.parser_name,
+            parser_version=parser.parser_version,
+        )
+
+    return parser.inspect_text(
+        file_id=file_id,
+        normalized_text=normalized_text,
+        delimiter=delimiter,
+    )
+
+
+def _build_upload_message(
+    *,
+    quarantine_required: bool,
+    inspection_result: ParserInspectionResult,
+) -> str:
     if quarantine_required:
         return (
             "File was quarantined after normalization failed. Review the source file before "
             "attempting parser execution."
         )
 
+    if inspection_result.suspicious_rows_recorded > 0:
+        return (
+            "File stored locally, raw rows were audited, and suspicious rows were flagged "
+            "for review before bank-specific transaction mapping is introduced."
+        )
+
     return (
-        "File stored locally, normalized for pre-parse metadata, and registered for "
-        "processing. Parsing and validation will be added in subsequent milestones."
+        "File stored locally, raw rows were audited, and parser scaffolding captured "
+        "header and row metadata for later canonical mapping."
     )

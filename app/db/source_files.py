@@ -50,48 +50,18 @@ WHERE file_hash = ?
 """
 
 
-def insert_source_file(record: SourceFileRecord) -> SourceFileRecord:
+def insert_source_file(
+    record: SourceFileRecord,
+    *,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> SourceFileRecord:
     """Insert a source file row and return the persisted record."""
 
-    with database_connection() as connection:
-        connection.execute(
-            """
-            INSERT INTO source_files (
-                file_id,
-                original_filename,
-                stored_path,
-                bank_name,
-                account_id,
-                file_hash,
-                file_size_bytes,
-                uploaded_at,
-                parser_version,
-                import_status,
-                statement_start_date,
-                statement_end_date,
-                encoding_detected,
-                delimiter_detected
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                str(record.file_id),
-                record.original_filename,
-                record.stored_path,
-                record.bank_name.value,
-                record.account_id,
-                record.file_hash,
-                record.file_size_bytes,
-                _as_utc_naive(record.uploaded_at),
-                record.parser_version,
-                record.import_status.value,
-                record.statement_start_date,
-                record.statement_end_date,
-                record.encoding_detected,
-                record.delimiter_detected,
-            ],
-        )
-        return get_source_file_by_id(record.file_id, connection=connection)
+    if connection is None:
+        with database_connection() as new_connection:
+            return _insert_source_file(new_connection, record)
+
+    return _insert_source_file(connection, record)
 
 
 def get_source_file_by_id(
@@ -120,6 +90,50 @@ def get_source_file_by_hash(
             return _fetch_source_file_by_hash(new_connection, file_hash)
 
     return _fetch_source_file_by_hash(connection, file_hash)
+
+
+def _insert_source_file(
+    connection: duckdb.DuckDBPyConnection,
+    record: SourceFileRecord,
+) -> SourceFileRecord:
+    connection.execute(
+        """
+        INSERT INTO source_files (
+            file_id,
+            original_filename,
+            stored_path,
+            bank_name,
+            account_id,
+            file_hash,
+            file_size_bytes,
+            uploaded_at,
+            parser_version,
+            import_status,
+            statement_start_date,
+            statement_end_date,
+            encoding_detected,
+            delimiter_detected
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            str(record.file_id),
+            record.original_filename,
+            record.stored_path,
+            record.bank_name.value,
+            record.account_id,
+            record.file_hash,
+            record.file_size_bytes,
+            _as_utc_naive(record.uploaded_at),
+            record.parser_version,
+            record.import_status.value,
+            record.statement_start_date,
+            record.statement_end_date,
+            record.encoding_detected,
+            record.delimiter_detected,
+        ],
+    )
+    return get_source_file_by_id(record.file_id, connection=connection)
 
 
 def _fetch_source_file(connection: duckdb.DuckDBPyConnection, file_id: UUID) -> SourceFileRecord:

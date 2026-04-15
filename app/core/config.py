@@ -28,7 +28,9 @@ class Settings(BaseSettings):
     uploads_dir: Path = Field(default=PROJECT_ROOT / "data" / "uploads")
     quarantine_dir: Path = Field(default=PROJECT_ROOT / "data" / "quarantine")
     storage_dir: Path = Field(default=PROJECT_ROOT / "storage")
+    database_path: Path = Field(default=PROJECT_ROOT / "storage" / "my_fi.duckdb")
     test_fixtures_dir: Path = Field(default=PROJECT_ROOT / "tests" / "fixtures")
+    default_parser_version: str = "v1"
 
     @property
     def required_directories(self) -> tuple[Path, ...]:

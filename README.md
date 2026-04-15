@@ -16,7 +16,7 @@ This repository is being built in small vertical slices.
 * feature development should happen on short-lived branches
 * changes should merge back to `master` through pull requests
 
-The current completed milestone is `P0: Bootstrap the runnable service`.
+The current completed milestone on `master` is `P1: Upload API and local file storage`.
 
 ## Project Overview
 
@@ -36,11 +36,12 @@ The current branch-by-branch roadmap starts with the FastAPI foundation and then
 
 * Python
 * FastAPI
+* DuckDB
 * `uv` for dependency management and local execution
 * Pydantic and `pydantic-settings`
 * `pytest`, `ruff`, and `mypy` for quality checks
 
-DuckDB will be introduced in the next milestone when the source file registry and persistence layer are added.
+DuckDB now backs the source file registry. Transaction, report, and reconciliation tables will be added in later milestones.
 
 ## Project Layout
 
@@ -48,7 +49,9 @@ DuckDB will be introduced in the next milestone when the source file registry an
 app/
   api/
   core/
+  db/
   models/
+  services/
 data/
   uploads/
   quarantine/
@@ -119,7 +122,14 @@ Current supported bank names:
 * `kotak`
 * `federal`
 
-At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, and returns structured metadata. Import registry, idempotency, and parsing arrive in the next milestones.
+At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, persists a `source_files` registry row in DuckDB, and returns structured metadata. Idempotency and parsing arrive in the next milestones.
+
+The registry currently tracks:
+
+* file identity and hash metadata
+* current import lifecycle status
+* parser version
+* placeholder fields for statement and file-detection metadata
 
 ## Quality Checks
 

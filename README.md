@@ -122,7 +122,13 @@ Current supported bank names:
 * `kotak`
 * `federal`
 
-At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, persists a `source_files` registry row in DuckDB, and returns structured metadata. Idempotency and parsing arrive in the next milestones.
+At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, persists a `source_files` registry row in DuckDB, and returns structured metadata.
+
+Re-uploading the same file content is idempotent:
+
+* the existing import metadata is returned
+* no second registry row is created
+* no second stored file is written
 
 The registry currently tracks:
 
@@ -130,6 +136,7 @@ The registry currently tracks:
 * current import lifecycle status
 * parser version
 * placeholder fields for statement and file-detection metadata
+* duplicate-file detection at the file hash level
 
 ## Quality Checks
 

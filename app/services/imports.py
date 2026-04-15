@@ -7,7 +7,7 @@ from re import sub
 from uuid import uuid4
 
 from app.core.config import get_settings
-from app.db.source_files import insert_source_file
+from app.db.source_files import get_source_file_by_hash, insert_source_file
 from app.models.imports import BankName, ImportStatus, SourceFileRecord, UploadCsvResponse
 
 
@@ -22,6 +22,14 @@ def store_uploaded_csv(
 
     settings = get_settings()
     file_hash = sha256(file_bytes).hexdigest()
+    existing_record = get_source_file_by_hash(file_hash)
+    if existing_record is not None:
+        return UploadCsvResponse.from_source_file_record(
+            existing_record,
+            duplicate_file=True,
+            message="Matching file already registered. Returning existing import metadata.",
+        )
+
     file_id = uuid4()
     sanitized_filename = _sanitize_filename(original_filename)
     destination_dir = settings.uploads_dir / bank_name.value / file_hash[:2]
@@ -45,14 +53,26 @@ def store_uploaded_csv(
     try:
         persisted_record = insert_source_file(source_file)
     except Exception:
+        existing_record = get_source_file_by_hash(file_hash)
+        if existing_record is not None:
+            if stored_path != Path(existing_record.stored_path):
+                stored_path.unlink(missing_ok=True)
+
+            return UploadCsvResponse.from_source_file_record(
+                existing_record,
+                duplicate_file=True,
+                message="Matching file already registered. Returning existing import metadata.",
+            )
+
         stored_path.unlink(missing_ok=True)
         raise
 
     return UploadCsvResponse.from_source_file_record(
         persisted_record,
+        duplicate_file=False,
         message=(
-            "File stored locally and registered for processing. Idempotency, "
-            "parsing, and validation will be added in subsequent milestones."
+            "File stored locally and registered for processing. Parsing and "
+            "validation will be added in subsequent milestones."
         ),
     )
 

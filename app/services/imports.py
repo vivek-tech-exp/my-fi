@@ -9,6 +9,7 @@ from uuid import uuid4
 from app.core.config import get_settings
 from app.db.source_files import get_source_file_by_hash, insert_source_file
 from app.models.imports import BankName, ImportStatus, SourceFileRecord, UploadCsvResponse
+from app.services.normalization import normalize_uploaded_csv
 
 
 def store_uploaded_csv(
@@ -31,8 +32,14 @@ def store_uploaded_csv(
         )
 
     file_id = uuid4()
+    normalization_result = normalize_uploaded_csv(file_bytes)
+    destination_root = (
+        settings.quarantine_dir
+        if normalization_result.quarantine_required
+        else settings.uploads_dir
+    )
     sanitized_filename = _sanitize_filename(original_filename)
-    destination_dir = settings.uploads_dir / bank_name.value / file_hash[:2]
+    destination_dir = destination_root / bank_name.value / file_hash[:2]
     destination_dir.mkdir(parents=True, exist_ok=True)
     stored_path = destination_dir / f"{file_hash}__{sanitized_filename}"
     stored_path.write_bytes(file_bytes)
@@ -47,7 +54,13 @@ def store_uploaded_csv(
         file_size_bytes=len(file_bytes),
         uploaded_at=datetime.now(UTC),
         parser_version=settings.default_parser_version,
-        import_status=ImportStatus.RECEIVED,
+        import_status=(
+            ImportStatus.FAIL_NEEDS_REVIEW
+            if normalization_result.quarantine_required
+            else ImportStatus.RECEIVED
+        ),
+        encoding_detected=normalization_result.encoding_detected,
+        delimiter_detected=normalization_result.delimiter_detected,
     )
 
     try:
@@ -70,10 +83,7 @@ def store_uploaded_csv(
     return UploadCsvResponse.from_source_file_record(
         persisted_record,
         duplicate_file=False,
-        message=(
-            "File stored locally and registered for processing. Parsing and "
-            "validation will be added in subsequent milestones."
-        ),
+        message=_build_upload_message(normalization_result.quarantine_required),
     )
 
 
@@ -86,3 +96,16 @@ def _sanitize_filename(filename: str) -> str:
 
     cleaned_name = sub(r"[^A-Za-z0-9._-]+", "_", raw_name)
     return cleaned_name.strip("._") or "upload.csv"
+
+
+def _build_upload_message(quarantine_required: bool) -> str:
+    if quarantine_required:
+        return (
+            "File was quarantined after normalization failed. Review the source file before "
+            "attempting parser execution."
+        )
+
+    return (
+        "File stored locally, normalized for pre-parse metadata, and registered for "
+        "processing. Parsing and validation will be added in subsequent milestones."
+    )

@@ -10,13 +10,19 @@ import duckdb
 
 from app.core.config import get_settings
 from app.db.canonical_transactions import (
+    delete_canonical_transactions_by_file_id,
     get_canonical_transaction_count,
     insert_canonical_transactions,
 )
 from app.db.database import database_connection
-from app.db.raw_rows import get_raw_row_audit_summary, insert_raw_rows
+from app.db.raw_rows import (
+    delete_raw_rows_by_file_id,
+    get_raw_row_audit_summary,
+    insert_raw_rows,
+)
 from app.db.source_files import (
     get_source_file_by_hash,
+    get_source_file_by_id,
     insert_source_file,
     update_source_file_processing_result,
 )
@@ -144,6 +150,58 @@ def store_uploaded_csv(
     )
 
 
+def reprocess_import(file_id: UUID) -> UploadCsvResponse:
+    """Re-run parser and validation logic for a stored source file."""
+
+    settings = get_settings()
+    source_file = get_source_file_by_id(file_id)
+    stored_path = Path(source_file.stored_path)
+    if not stored_path.exists():
+        raise FileNotFoundError(f"Stored source file '{source_file.stored_path}' was not found.")
+
+    parser = get_bank_parser(
+        bank_name=source_file.bank_name,
+        parser_version=settings.default_parser_version,
+    )
+    normalization_result = normalize_uploaded_csv(stored_path.read_bytes())
+
+    with database_connection() as connection:
+        connection.execute("BEGIN TRANSACTION")
+        try:
+            delete_raw_rows_by_file_id(file_id, connection=connection)
+            delete_canonical_transactions_by_file_id(file_id, connection=connection)
+            persisted_record, inspection_result, validation_report = _process_source_file_record(
+                source_file=source_file,
+                parser=parser,
+                normalization_result=normalization_result,
+                account_id=source_file.account_id,
+                connection=connection,
+            )
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+    return UploadCsvResponse.from_source_file_record(
+        persisted_record,
+        parser_name=parser.parser_name,
+        audit_summary=inspection_result,
+        transactions_imported=inspection_result.transactions_imported,
+        duplicate_transactions_detected=inspection_result.duplicate_transactions_detected,
+        exact_duplicate_transactions=inspection_result.exact_duplicate_transactions,
+        probable_duplicate_transactions=inspection_result.probable_duplicate_transactions,
+        ambiguous_transactions_detected=inspection_result.ambiguous_transactions_detected,
+        duplicate_file=False,
+        message=_build_upload_message(
+            quarantine_required=normalization_result.quarantine_required,
+            inspection_result=inspection_result,
+            supports_canonical_mapping=parser.supports_canonical_mapping,
+            validation_report=validation_report,
+            reprocessed=True,
+        ),
+    )
+
+
 def _process_source_file_record(
     *,
     source_file: SourceFileRecord,
@@ -199,6 +257,7 @@ def _process_source_file_record(
             import_status=ImportStatus(validation_report.final_status),
             statement_start_date=inspection_result.statement_start_date,
             statement_end_date=inspection_result.statement_end_date,
+            parser_version=parser.parser_version,
             connection=connection,
         )
 
@@ -263,7 +322,10 @@ def _build_upload_message(
     inspection_result: ParserInspectionResult,
     supports_canonical_mapping: bool,
     validation_report: ValidationReportRecord,
+    reprocessed: bool = False,
 ) -> str:
+    prefix = "File reprocessed" if reprocessed else "File parsed"
+
     if quarantine_required:
         return (
             "File was quarantined after normalization failed. Review the source file before "
@@ -279,18 +341,18 @@ def _build_upload_message(
             or inspection_result.ambiguous_transactions_detected > 0
         ):
             return (
-                f"File parsed and {inspection_result.transactions_imported} new transactions "
+                f"{prefix} and {inspection_result.transactions_imported} new transactions "
                 "were imported into the canonical ledger with duplicate warnings."
             )
 
         if inspection_result.suspicious_rows_recorded > 0:
             return (
-                f"File parsed and {inspection_result.transactions_imported} transactions were "
+                f"{prefix} and {inspection_result.transactions_imported} transactions were "
                 "imported into the canonical ledger with warnings."
             )
 
         return (
-            f"File parsed and {inspection_result.transactions_imported} transactions were "
+            f"{prefix} and {inspection_result.transactions_imported} transactions were "
             "imported into the canonical ledger."
         )
 

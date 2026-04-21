@@ -143,6 +143,21 @@ def get_canonical_transaction_count(
     return _fetch_canonical_transaction_count(connection, file_id)
 
 
+def delete_canonical_transactions_by_file_id(
+    file_id: UUID,
+    *,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> None:
+    """Delete canonical transactions for a file before reprocessing."""
+
+    if connection is None:
+        with database_connection() as new_connection:
+            _delete_canonical_transactions_by_file_id(new_connection, file_id)
+        return
+
+    _delete_canonical_transactions_by_file_id(connection, file_id)
+
+
 def get_canonical_transaction_by_fingerprint(
     transaction_fingerprint: str,
     *,
@@ -275,6 +290,16 @@ def _fetch_potential_duplicate_candidates(
         ],
     ).fetchall()
     return [_row_to_canonical_transaction_record(row) for row in rows]
+
+
+def _delete_canonical_transactions_by_file_id(
+    connection: duckdb.DuckDBPyConnection,
+    file_id: UUID,
+) -> None:
+    connection.execute(
+        "DELETE FROM canonical_transactions WHERE source_file_id = ?",
+        [str(file_id)],
+    )
 
 
 def _row_to_canonical_transaction_record(row: tuple[object, ...]) -> CanonicalTransactionRecord:

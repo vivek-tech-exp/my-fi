@@ -1,9 +1,12 @@
-"""Models for parser inspection and raw-row audit trails."""
+"""Models for parser inspection, raw-row audit trails, and parser outputs."""
 
+from datetime import date
 from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from app.models.ledger import CanonicalTransactionRecord
 
 
 class RawRowType(StrEnum):
@@ -42,12 +45,15 @@ class RawRowAuditSummary(BaseModel):
 
 
 class ParserInspectionResult(RawRowAuditSummary):
-    """Full parser inspection output before canonical mapping is introduced."""
+    """Full parser result including raw-row inspection and canonical mappings."""
 
     parser_name: str = Field(min_length=1)
     parser_version: str = Field(min_length=1)
     header_row_number: int | None = Field(default=None, ge=1)
+    statement_start_date: date | None = None
+    statement_end_date: date | None = None
     raw_rows: list[RawRowRecord] = Field(default_factory=list)
+    canonical_transactions: list[CanonicalTransactionRecord] = Field(default_factory=list)
 
     def add_row(self, row: RawRowRecord) -> None:
         """Track a single raw-row audit record and update summary counters."""
@@ -65,3 +71,9 @@ class ParserInspectionResult(RawRowAuditSummary):
             self.ignored_rows_recorded += 1
         else:
             self.suspicious_rows_recorded += 1
+
+    @property
+    def transactions_imported(self) -> int:
+        """Return the number of canonical transactions produced by the parser."""
+
+        return len(self.canonical_transactions)

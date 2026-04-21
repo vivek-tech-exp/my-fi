@@ -6,11 +6,21 @@ from abc import ABC, abstractmethod
 from csv import Error as CsvError
 from csv import reader
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from re import sub
+from typing import Final
 from uuid import UUID, uuid4
 
 from app.models.imports import BankName
+from app.models.ledger import (
+    CanonicalTransactionRecord,
+    DuplicateConfidence,
+    TransactionDirection,
+)
 from app.models.parsing import ParserInspectionResult, RawRowRecord, RawRowType
+
+DEFAULT_CURRENCY: Final[str] = "INR"
 
 
 @dataclass(frozen=True)
@@ -35,6 +45,7 @@ class BaseCsvParser(ABC):
 
     bank_name: BankName
     parser_name: str
+    supports_canonical_mapping: bool = False
 
     def __init__(self, *, parser_version: str) -> None:
         self.parser_version = parser_version
@@ -45,9 +56,11 @@ class BaseCsvParser(ABC):
         file_id: UUID,
         normalized_text: str,
         delimiter: str | None,
+        account_id: str | None,
     ) -> ParserInspectionResult:
         """Inspect normalized CSV text and emit raw-row audit records."""
 
+        self.reset_state()
         inspection_result = ParserInspectionResult(
             parser_name=self.parser_name,
             parser_version=self.parser_version,
@@ -107,27 +120,38 @@ class BaseCsvParser(ABC):
                 raw_text=repair_outcome.row_text,
                 columns=repair_outcome.columns,
                 header_columns=header_columns,
+                inspection_result=inspection_result,
             )
-            inspection_result.add_row(
-                self._build_raw_row(
-                    file_id=file_id,
-                    row_number=row_number,
-                    row_type=classification.row_type,
-                    raw_text=raw_line,
-                    normalized_text=repair_outcome.row_text if repair_outcome.repaired else None,
-                    raw_payload=repair_outcome.columns,
-                    rejection_reason=classification.rejection_reason,
-                    header_row=False,
-                    repaired_row=repair_outcome.repaired,
-                )
+            raw_row = self._build_raw_row(
+                file_id=file_id,
+                row_number=row_number,
+                row_type=classification.row_type,
+                raw_text=raw_line,
+                normalized_text=repair_outcome.row_text if repair_outcome.repaired else None,
+                raw_payload=repair_outcome.columns,
+                rejection_reason=classification.rejection_reason,
+                header_row=False,
+                repaired_row=repair_outcome.repaired,
+            )
+            inspection_result.add_row(raw_row)
+            self.after_row_classified(
+                row=raw_row,
+                account_id=account_id,
+                inspection_result=inspection_result,
             )
 
+        self.finalize_result(inspection_result)
         return inspection_result
 
     def should_ignore_line(self, raw_text: str) -> bool:
         """Skip rows that should not reach the parser-specific hooks."""
 
         return not raw_text.strip()
+
+    def reset_state(self) -> None:
+        """Reset parser state before inspecting a new file."""
+
+        return None
 
     def repair_row(
         self,
@@ -153,10 +177,11 @@ class BaseCsvParser(ABC):
         raw_text: str,
         columns: list[str],
         header_columns: list[str] | None,
+        inspection_result: ParserInspectionResult,
     ) -> RowClassification:
         """Classify a parsed row when the bank parser has not yet mapped it canonically."""
 
-        del row_number, raw_text
+        del row_number, raw_text, inspection_result
 
         if header_columns is None:
             return RowClassification(
@@ -172,10 +197,37 @@ class BaseCsvParser(ABC):
 
         return RowClassification(row_type=RawRowType.ACCEPTED)
 
-    def map_row_to_canonical_transaction(self, row: RawRowRecord) -> None:
-        """Placeholder hook for the later canonical-mapping milestone."""
+    def after_row_classified(
+        self,
+        *,
+        row: RawRowRecord,
+        account_id: str | None,
+        inspection_result: ParserInspectionResult,
+    ) -> None:
+        """Allow parsers to emit canonical transactions from accepted rows."""
 
-        del row
+        if row.row_type != RawRowType.ACCEPTED or not self.supports_canonical_mapping:
+            return
+
+        transaction = self.map_row_to_canonical_transaction(row=row, account_id=account_id)
+        if transaction is not None:
+            inspection_result.canonical_transactions.append(transaction)
+
+    def finalize_result(self, inspection_result: ParserInspectionResult) -> None:
+        """Populate any file-level metadata after all rows have been inspected."""
+
+        del inspection_result
+        return None
+
+    def map_row_to_canonical_transaction(
+        self,
+        *,
+        row: RawRowRecord,
+        account_id: str | None,
+    ) -> CanonicalTransactionRecord | None:
+        """Map an accepted raw row into a canonical transaction when supported."""
+
+        del row, account_id
         return None
 
     def normalized_header_tokens(self, columns: list[str]) -> set[str]:
@@ -218,6 +270,86 @@ class BaseCsvParser(ABC):
             return next(reader([raw_text], delimiter=delimiter))
         except (CsvError, StopIteration):
             return [raw_text]
+
+    def build_transaction_fingerprint(
+        self,
+        *,
+        account_id: str | None,
+        transaction_date: str,
+        value_date: str | None,
+        description_raw: str,
+        amount: str,
+        direction: str,
+        balance: str | None,
+        reference_number: str | None,
+    ) -> str:
+        """Build a stable placeholder fingerprint until duplicate logic is added."""
+
+        from hashlib import sha256
+
+        normalized_description = normalized_header_token(description_raw)
+        fingerprint_input = "|".join(
+            [
+                self.bank_name.value,
+                account_id or "",
+                transaction_date,
+                value_date or "",
+                amount,
+                direction,
+                balance or "",
+                reference_number or "",
+                normalized_description,
+            ]
+        )
+        return sha256(fingerprint_input.encode("utf-8")).hexdigest()
+
+    def build_canonical_transaction(
+        self,
+        *,
+        source_file_id: UUID,
+        raw_row_id: UUID,
+        account_id: str | None,
+        transaction_date: date,
+        value_date: date | None,
+        description_raw: str,
+        amount: Decimal,
+        direction: TransactionDirection,
+        balance: Decimal | None,
+        source_row_number: int,
+        reference_number: str | None,
+    ) -> CanonicalTransactionRecord:
+        """Build a canonical transaction record with shared defaults."""
+
+        amount_text = str(amount)
+        balance_text = str(balance) if balance is not None else None
+        return CanonicalTransactionRecord(
+            transaction_id=uuid4(),
+            source_file_id=source_file_id,
+            raw_row_id=raw_row_id,
+            bank_name=self.bank_name.value,
+            account_id=account_id,
+            transaction_date=transaction_date,
+            value_date=value_date,
+            description_raw=description_raw,
+            amount=amount,
+            direction=direction,
+            balance=balance,
+            currency=DEFAULT_CURRENCY,
+            source_row_number=source_row_number,
+            reference_number=reference_number,
+            transaction_fingerprint=self.build_transaction_fingerprint(
+                account_id=account_id,
+                transaction_date=transaction_date.isoformat(),
+                value_date=value_date.isoformat() if value_date is not None else None,
+                description_raw=description_raw,
+                amount=amount_text,
+                direction=direction.value,
+                balance=balance_text,
+                reference_number=reference_number,
+            ),
+            duplicate_confidence=DuplicateConfidence.UNIQUE,
+            created_at=datetime.now(UTC),
+        )
 
 
 def normalized_header_token(value: str) -> str:

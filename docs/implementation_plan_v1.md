@@ -8,7 +8,7 @@ The delivery strategy is:
 
 1. build the runnable service foundation first
 2. make the upload API usable from FastAPI Swagger UI at `/docs`
-3. ship one full bank vertical slice end to end with HDFC
+3. ship one full bank vertical slice end to end with Kotak
 4. add validation, reporting, and safe reprocessing
 5. extend parser coverage to Kotak and Federal without collapsing bank-specific logic
 
@@ -17,7 +17,7 @@ Project defaults for V1:
 * Python project tooling: `uv`
 * API docs and upload UI: FastAPI built-in Swagger UI
 * parser rollout: one bank at a time
-* first bank: HDFC
+* first bank: Kotak
 
 ---
 
@@ -208,35 +208,37 @@ Done when:
 
 ---
 
-### P6. HDFC end-to-end vertical slice
+### P6. Kotak end-to-end vertical slice
 
 Priority: high
 
-Goal: prove the full ingestion pipeline with one real bank implementation.
+Goal: prove the full ingestion pipeline with one real bank implementation using a real exported statement shape already observed locally.
 
 Scope:
 
-* add anonymized HDFC fixtures covering:
+* add anonymized Kotak fixtures covering:
   * clean files
   * noisy files
+  * account metadata preambles
+  * footer and closing-balance rows
   * repeated headers
-  * fluff rows
   * malformed rows
   * narration with commas
   * debit/credit variations
   * balance-present and balance-missing cases
-* implement HDFC parser behavior:
+* implement Kotak parser behavior:
   * header detection
   * row repair where needed
   * transaction row detection
   * debit/credit interpretation
+  * statement-period extraction
   * canonical transaction mapping
 * create `canonical_transactions` table
 * persist accepted transactions with source-row traceability
 
 Done when:
 
-* an HDFC CSV can be uploaded via `/docs`
+* a Kotak CSV can be uploaded via `/docs`
 * valid transaction rows are imported into the canonical ledger
 * ignored and suspicious rows are stored separately
 
@@ -503,4 +505,3 @@ That gives us a stable base before the upload API work begins.
 * do not trust raw CSV rows as transactions until they are classified
 * do not trust file parsing success as proof of ledger correctness
 * fail safely by warning or quarantining suspicious data instead of silently accepting it
-

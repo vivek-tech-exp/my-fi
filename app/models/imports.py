@@ -70,11 +70,14 @@ class UploadCsvResponse(BaseModel):
     parser_version: str
     parser_name: str
     status: ImportStatus
+    statement_start_date: date | None = None
+    statement_end_date: date | None = None
     encoding_detected: str | None = None
     delimiter_detected: str | None = None
     header_detected: bool = False
     raw_rows_recorded: int = Field(default=0, ge=0)
     suspicious_rows_recorded: int = Field(default=0, ge=0)
+    transactions_imported: int = Field(default=0, ge=0)
     uploaded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     message: str
 
@@ -85,6 +88,7 @@ class UploadCsvResponse(BaseModel):
         *,
         parser_name: str,
         audit_summary: RawRowAuditSummary | None = None,
+        transactions_imported: int = 0,
         duplicate_file: bool = False,
         message: str,
     ) -> "UploadCsvResponse":
@@ -101,11 +105,14 @@ class UploadCsvResponse(BaseModel):
             parser_version=record.parser_version,
             parser_name=parser_name,
             status=record.import_status,
+            statement_start_date=record.statement_start_date,
+            statement_end_date=record.statement_end_date,
             encoding_detected=record.encoding_detected,
             delimiter_detected=record.delimiter_detected,
             header_detected=raw_row_summary.header_detected,
             raw_rows_recorded=raw_row_summary.raw_rows_recorded,
             suspicious_rows_recorded=raw_row_summary.suspicious_rows_recorded,
+            transactions_imported=transactions_imported,
             uploaded_at=record.uploaded_at,
             message=message,
         )

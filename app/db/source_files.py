@@ -49,6 +49,26 @@ FROM source_files
 WHERE file_hash = ?
 """
 
+SOURCE_FILES_LIST_SQL = """
+SELECT
+    file_id,
+    original_filename,
+    stored_path,
+    bank_name,
+    account_id,
+    file_hash,
+    file_size_bytes,
+    uploaded_at,
+    parser_version,
+    import_status,
+    statement_start_date,
+    statement_end_date,
+    encoding_detected,
+    delimiter_detected
+FROM source_files
+ORDER BY uploaded_at DESC
+"""
+
 
 def insert_source_file(
     record: SourceFileRecord,
@@ -90,6 +110,19 @@ def get_source_file_by_hash(
             return _fetch_source_file_by_hash(new_connection, file_hash)
 
     return _fetch_source_file_by_hash(connection, file_hash)
+
+
+def list_source_files(
+    *,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> list[SourceFileRecord]:
+    """List source file registry rows."""
+
+    if connection is None:
+        with database_connection() as new_connection:
+            return _list_source_files(new_connection)
+
+    return _list_source_files(connection)
 
 
 def update_source_file_processing_result(
@@ -209,6 +242,11 @@ def _fetch_source_file_by_hash(
         return None
 
     return _row_to_source_file_record(row)
+
+
+def _list_source_files(connection: duckdb.DuckDBPyConnection) -> list[SourceFileRecord]:
+    rows = connection.execute(SOURCE_FILES_LIST_SQL).fetchall()
+    return [_row_to_source_file_record(row) for row in rows]
 
 
 def _row_to_source_file_record(row: tuple[object, ...]) -> SourceFileRecord:

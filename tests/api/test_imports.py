@@ -367,6 +367,63 @@ def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
     ]
 
 
+def test_import_inspection_endpoints_return_reports_and_rows(
+    client: TestClient,
+) -> None:
+    file_bytes = (
+        b'"",,Account Statement\n'
+        b'"Jharkhand ",,,,Period,From 01/01/2026 To 15/04/2026\n'
+        b"Sl. No.,Transaction Date,Value Date,Description,"
+        b"Chq / Ref No.,Debit,Credit,Balance,Dr / Cr\n"
+        b"1,03-04-2026 19:40:46,03-04-2026,"
+        b"UPI/CAFE BREWSOME P/627219443204/resolve interna,"
+        b'UPI-609393884269,310.78,,"39,591.75",CR\n'
+        b"2,02-04-2026 19:56:53,02-04-2026,"
+        b"UPI/MANKONDA VIVEK/120977030678/UPI,"
+        b'UPI-609218418071,,"50,000.00","53,053.91",CR\n'
+        b'Closing balance,"as on 15/04/2026   INR 53,053.91"\n'
+    )
+
+    upload_response = client.post(
+        "/imports/csv",
+        data={"bank_name": "kotak", "account_id": "travel-fund"},
+        files={"file": ("kotak_statement.csv", file_bytes, "text/csv")},
+    )
+
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    list_response = client.get("/imports")
+    detail_response = client.get(f"/imports/{file_id}")
+    report_response = client.get(f"/imports/{file_id}/report")
+    rows_response = client.get(f"/imports/{file_id}/rows")
+
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["file_id"] == file_id
+
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["file_id"] == file_id
+    assert detail_payload["status"] == "PASS"
+    assert detail_payload["report"]["transactions_imported"] == 2
+
+    assert report_response.status_code == 200
+    report_payload = report_response.json()
+    assert report_payload["file_id"] == file_id
+    assert report_payload["total_rows"] == 6
+    assert report_payload["accepted_rows"] == 2
+    assert report_payload["ignored_rows"] == 4
+    assert report_payload["suspicious_rows"] == 0
+    assert report_payload["transactions_imported"] == 2
+    assert report_payload["final_status"] == "PASS"
+
+    assert rows_response.status_code == 200
+    rows_payload = rows_response.json()
+    assert len(rows_payload) == 6
+    assert rows_payload[2]["header_row"] is True
+    assert rows_payload[3]["row_type"] == "accepted"
+
+
 def test_upload_csv_skips_exact_duplicate_transactions_from_overlapping_kotak_file(
     client: TestClient,
     settings: Settings,

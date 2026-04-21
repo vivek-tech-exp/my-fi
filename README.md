@@ -16,7 +16,7 @@ This repository is being built in small vertical slices.
 * feature development should happen on short-lived branches
 * changes should merge back to `master` through pull requests
 
-The current completed milestone on `master` is `P10: reprocessing support`.
+The current completed milestone on `master` is `P11: HDFC and Federal parser support`.
 
 ## Project Overview
 
@@ -41,7 +41,7 @@ The current branch-by-branch roadmap starts with the FastAPI foundation and then
 * Pydantic and `pydantic-settings`
 * `pytest`, `ruff`, and `mypy` for quality checks
 
-DuckDB now backs the source file registry, raw-row audit trail, canonical Kotak transaction ledger, and validation reports.
+DuckDB now backs the source file registry, raw-row audit trail, canonical transaction ledger, and validation reports.
 
 ## Project Layout
 
@@ -152,9 +152,10 @@ Each readable upload now also leaves a raw-row audit trail:
 * every inspected row is persisted in the `raw_rows` DuckDB table
 * raw row payloads, parser name, parser version, and rejection reasons are preserved for later debugging
 
-Kotak uploads now also write accepted transaction rows into the canonical ledger:
+Supported bank uploads now write accepted transaction rows into the canonical ledger:
 
-* account metadata preambles and footer rows are ignored safely
+* bank-specific parsers remain isolated for HDFC, Kotak, and Federal
+* account metadata preambles and footer rows are ignored safely where applicable
 * statement start and end dates are extracted when present
 * debit and credit values are normalized into explicit `amount` and `direction`
 * accepted rows are written to the `canonical_transactions` DuckDB table

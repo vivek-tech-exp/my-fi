@@ -369,6 +369,7 @@ def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
 
 def test_import_inspection_endpoints_return_reports_and_rows(
     client: TestClient,
+    settings: Settings,
 ) -> None:
     file_bytes = (
         b'"",,Account Statement\n'
@@ -422,6 +423,31 @@ def test_import_inspection_endpoints_return_reports_and_rows(
     assert len(rows_payload) == 6
     assert rows_payload[2]["header_row"] is True
     assert rows_payload[3]["row_type"] == "accepted"
+
+    reprocess_response = client.post(f"/imports/{file_id}/reprocess")
+
+    assert reprocess_response.status_code == 200
+    reprocess_payload = reprocess_response.json()
+    assert reprocess_payload["file_id"] == file_id
+    assert reprocess_payload["status"] == "PASS"
+    assert reprocess_payload["transactions_imported"] == 2
+    assert reprocess_payload["duplicate_transactions_detected"] == 0
+    assert reprocess_payload["message"] == (
+        "File reprocessed and 2 transactions were imported into the canonical ledger."
+    )
+
+    with duckdb.connect(str(settings.database_path), read_only=True) as connection:
+        canonical_count = connection.execute(
+            "SELECT COUNT(*) FROM canonical_transactions WHERE source_file_id = ?",
+            [file_id],
+        ).fetchone()
+        validation_report_count = connection.execute(
+            "SELECT COUNT(*) FROM validation_reports WHERE file_id = ?",
+            [file_id],
+        ).fetchone()
+
+    assert canonical_count == (2,)
+    assert validation_report_count == (2,)
 
 
 def test_upload_csv_skips_exact_duplicate_transactions_from_overlapping_kotak_file(

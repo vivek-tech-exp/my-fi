@@ -131,6 +131,7 @@ def update_source_file_processing_result(
     import_status: ImportStatus,
     statement_start_date: date | None,
     statement_end_date: date | None,
+    parser_version: str | None = None,
     connection: duckdb.DuckDBPyConnection | None = None,
 ) -> SourceFileRecord:
     """Update the final parser outcome fields for a source file."""
@@ -143,6 +144,7 @@ def update_source_file_processing_result(
                 import_status=import_status,
                 statement_start_date=statement_start_date,
                 statement_end_date=statement_end_date,
+                parser_version=parser_version,
             )
 
     return _update_source_file_processing_result(
@@ -151,6 +153,7 @@ def update_source_file_processing_result(
         import_status=import_status,
         statement_start_date=statement_start_date,
         statement_end_date=statement_end_date,
+        parser_version=parser_version,
     )
 
 
@@ -205,17 +208,20 @@ def _update_source_file_processing_result(
     import_status: ImportStatus,
     statement_start_date: date | None,
     statement_end_date: date | None,
+    parser_version: str | None,
 ) -> SourceFileRecord:
     connection.execute(
         """
         UPDATE source_files
         SET
+            parser_version = COALESCE(?, parser_version),
             import_status = ?,
             statement_start_date = ?,
             statement_end_date = ?
         WHERE file_id = ?
         """,
         [
+            parser_version,
             import_status.value,
             statement_start_date,
             statement_end_date,

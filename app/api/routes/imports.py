@@ -17,7 +17,7 @@ from app.models.imports import (
 )
 from app.models.parsing import RawRowRecord
 from app.models.validation import ValidationReportRecord
-from app.services.imports import store_uploaded_csv
+from app.services.imports import reprocess_import, store_uploaded_csv
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -112,6 +112,26 @@ def get_import_report(file_id: UUID) -> ValidationReportRecord:
 def get_import_rows(file_id: UUID) -> list[RawRowRecord]:
     _get_source_file_or_404(file_id)
     return get_raw_rows_by_file_id(file_id)
+
+
+@router.post(
+    "/{file_id}/reprocess",
+    response_model=UploadCsvResponse,
+    summary="Reprocess a stored import",
+)
+def reprocess_import_route(file_id: UUID) -> UploadCsvResponse:
+    try:
+        return reprocess_import(file_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 def _get_source_file_or_404(file_id: UUID) -> SourceFileRecord:

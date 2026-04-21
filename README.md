@@ -16,7 +16,7 @@ This repository is being built in small vertical slices.
 * feature development should happen on short-lived branches
 * changes should merge back to `master` through pull requests
 
-The current completed milestone on `master` is `P9: import reports and inspection APIs`.
+The current completed milestone on `master` is `P10: reprocessing support`.
 
 ## Project Overview
 
@@ -114,6 +114,7 @@ Available now:
 * `GET /imports/{file_id}`
 * `GET /imports/{file_id}/report`
 * `GET /imports/{file_id}/rows`
+* `POST /imports/{file_id}/reprocess`
 
 The upload endpoint accepts:
 
@@ -179,6 +180,7 @@ Use the inspection APIs from Swagger UI to review imports without querying DuckD
 * `GET /imports/{file_id}` returns import metadata and the latest validation report
 * `GET /imports/{file_id}/report` returns the validation report
 * `GET /imports/{file_id}/rows` returns the raw-row audit trail
+* `POST /imports/{file_id}/reprocess` re-runs the parser and validation flow from the stored source file
 
 The registry currently tracks:
 

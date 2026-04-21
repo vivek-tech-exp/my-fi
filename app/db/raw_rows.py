@@ -95,6 +95,21 @@ def get_raw_rows_by_file_id(
     return _fetch_raw_rows_by_file_id(connection, file_id)
 
 
+def delete_raw_rows_by_file_id(
+    file_id: UUID,
+    *,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> None:
+    """Delete raw rows for a file before reprocessing."""
+
+    if connection is None:
+        with database_connection() as new_connection:
+            _delete_raw_rows_by_file_id(new_connection, file_id)
+        return
+
+    _delete_raw_rows_by_file_id(connection, file_id)
+
+
 def _insert_raw_rows(
     connection: duckdb.DuckDBPyConnection,
     records: Sequence[RawRowRecord],
@@ -182,3 +197,10 @@ def _row_to_raw_row_record(row: tuple[object, ...]) -> RawRowRecord:
             "repaired_row": cast(bool, row[11]),
         }
     )
+
+
+def _delete_raw_rows_by_file_id(
+    connection: duckdb.DuckDBPyConnection,
+    file_id: UUID,
+) -> None:
+    connection.execute("DELETE FROM raw_rows WHERE file_id = ?", [str(file_id)])

@@ -6,6 +6,8 @@ from pathlib import Path
 from re import sub
 from uuid import UUID, uuid4
 
+import duckdb
+
 from app.core.config import get_settings
 from app.db.canonical_transactions import (
     get_canonical_transaction_count,
@@ -18,12 +20,20 @@ from app.db.source_files import (
     insert_source_file,
     update_source_file_processing_result,
 )
-from app.models.imports import BankName, ImportStatus, SourceFileRecord, UploadCsvResponse
+from app.models.imports import (
+    BankName,
+    ImportStatus,
+    PreParseNormalizationResult,
+    SourceFileRecord,
+    UploadCsvResponse,
+)
 from app.models.parsing import ParserInspectionResult
+from app.models.validation import ValidationReportRecord
 from app.parsers import get_bank_parser
 from app.parsers.base import BaseCsvParser
 from app.services.duplicates import apply_duplicate_protection
 from app.services.normalization import normalize_uploaded_csv
+from app.services.validation import build_validation_report
 
 
 def store_uploaded_csv(
@@ -100,50 +110,16 @@ def store_uploaded_csv(
         with database_connection() as connection:
             connection.execute("BEGIN TRANSACTION")
             try:
-                persisted_record = insert_source_file(source_file, connection=connection)
-                inspection_result = _inspect_normalized_file(
-                    file_id=file_id,
-                    parser=parser,
-                    normalized_text=normalization_result.normalized_text,
-                    delimiter=normalization_result.delimiter_detected,
-                    account_id=account_id,
+                source_file = insert_source_file(source_file, connection=connection)
+                persisted_record, inspection_result, validation_report = (
+                    _process_source_file_record(
+                        source_file=source_file,
+                        parser=parser,
+                        normalization_result=normalization_result,
+                        account_id=account_id,
+                        connection=connection,
+                    )
                 )
-                insert_raw_rows(inspection_result.raw_rows, connection=connection)
-                if parser.supports_canonical_mapping and inspection_result.canonical_transactions:
-                    duplicate_result = apply_duplicate_protection(
-                        inspection_result.canonical_transactions,
-                        connection=connection,
-                    )
-                    inspection_result.canonical_transactions = (
-                        duplicate_result.transactions_to_insert
-                    )
-                    inspection_result.exact_duplicate_transactions = (
-                        duplicate_result.exact_duplicate_transactions
-                    )
-                    inspection_result.probable_duplicate_transactions = (
-                        duplicate_result.probable_duplicate_transactions
-                    )
-                    inspection_result.ambiguous_transactions_detected = (
-                        duplicate_result.ambiguous_transactions_detected
-                    )
-                    inspection_result.duplicate_transactions_detected = (
-                        duplicate_result.duplicate_transactions_detected
-                    )
-                    insert_canonical_transactions(
-                        inspection_result.canonical_transactions,
-                        connection=connection,
-                    )
-                if (
-                    parser.supports_canonical_mapping
-                    and not normalization_result.quarantine_required
-                ):
-                    persisted_record = update_source_file_processing_result(
-                        file_id=file_id,
-                        import_status=_derive_import_status(inspection_result),
-                        statement_start_date=inspection_result.statement_start_date,
-                        statement_end_date=inspection_result.statement_end_date,
-                        connection=connection,
-                    )
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
@@ -184,8 +160,69 @@ def store_uploaded_csv(
             quarantine_required=normalization_result.quarantine_required,
             inspection_result=inspection_result,
             supports_canonical_mapping=parser.supports_canonical_mapping,
+            validation_report=validation_report,
         ),
     )
+
+
+def _process_source_file_record(
+    *,
+    source_file: SourceFileRecord,
+    parser: BaseCsvParser,
+    normalization_result: PreParseNormalizationResult,
+    account_id: str | None,
+    connection: duckdb.DuckDBPyConnection,
+) -> tuple[SourceFileRecord, ParserInspectionResult, ValidationReportRecord]:
+    inspection_result = _inspect_normalized_file(
+        file_id=source_file.file_id,
+        parser=parser,
+        normalized_text=normalization_result.normalized_text,
+        delimiter=normalization_result.delimiter_detected,
+        account_id=account_id,
+    )
+    insert_raw_rows(inspection_result.raw_rows, connection=connection)
+    if parser.supports_canonical_mapping and inspection_result.canonical_transactions:
+        duplicate_result = apply_duplicate_protection(
+            inspection_result.canonical_transactions,
+            connection=connection,
+        )
+        inspection_result.canonical_transactions = duplicate_result.transactions_to_insert
+        inspection_result.exact_duplicate_transactions = (
+            duplicate_result.exact_duplicate_transactions
+        )
+        inspection_result.probable_duplicate_transactions = (
+            duplicate_result.probable_duplicate_transactions
+        )
+        inspection_result.ambiguous_transactions_detected = (
+            duplicate_result.ambiguous_transactions_detected
+        )
+        inspection_result.duplicate_transactions_detected = (
+            duplicate_result.duplicate_transactions_detected
+        )
+        insert_canonical_transactions(
+            inspection_result.canonical_transactions,
+            connection=connection,
+        )
+
+    validation_report = build_validation_report(
+        file_id=source_file.file_id,
+        inspection_result=inspection_result,
+        supports_canonical_mapping=parser.supports_canonical_mapping,
+        quarantine_required=normalization_result.quarantine_required,
+        normalization_failure_reason=normalization_result.failure_reason,
+    )
+
+    persisted_record = source_file
+    if parser.supports_canonical_mapping or normalization_result.quarantine_required:
+        persisted_record = update_source_file_processing_result(
+            file_id=source_file.file_id,
+            import_status=ImportStatus(validation_report.final_status),
+            statement_start_date=inspection_result.statement_start_date,
+            statement_end_date=inspection_result.statement_end_date,
+            connection=connection,
+        )
+
+    return persisted_record, inspection_result, validation_report
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -226,12 +263,16 @@ def _build_upload_message(
     quarantine_required: bool,
     inspection_result: ParserInspectionResult,
     supports_canonical_mapping: bool,
+    validation_report: ValidationReportRecord,
 ) -> str:
     if quarantine_required:
         return (
             "File was quarantined after normalization failed. Review the source file before "
             "attempting parser execution."
         )
+
+    if validation_report.final_status == ImportStatus.FAIL_NEEDS_REVIEW.value:
+        return "File parsed but failed validation. Review the import report before trusting it."
 
     if supports_canonical_mapping and inspection_result.transactions_imported > 0:
         if (
@@ -271,23 +312,3 @@ def _build_upload_message(
         "File stored locally, raw rows were audited, and parser scaffolding captured "
         "header and row metadata for later canonical mapping."
     )
-
-
-def _derive_import_status(inspection_result: ParserInspectionResult) -> ImportStatus:
-    if inspection_result.transactions_imported == 0:
-        if (
-            inspection_result.duplicate_transactions_detected > 0
-            or inspection_result.ambiguous_transactions_detected > 0
-        ):
-            return ImportStatus.PASS_WITH_WARNINGS
-
-        return ImportStatus.FAIL_NEEDS_REVIEW
-
-    if (
-        inspection_result.suspicious_rows_recorded > 0
-        or inspection_result.duplicate_transactions_detected > 0
-        or inspection_result.ambiguous_transactions_detected > 0
-    ):
-        return ImportStatus.PASS_WITH_WARNINGS
-
-    return ImportStatus.PASS

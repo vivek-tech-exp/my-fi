@@ -7,7 +7,7 @@ from uuid import UUID
 import duckdb
 
 from app.db.database import database_connection
-from app.models.imports import SourceFileRecord
+from app.models.imports import ImportStatus, SourceFileRecord
 
 SOURCE_FILE_SELECT_SQL = """
 SELECT
@@ -92,6 +92,35 @@ def get_source_file_by_hash(
     return _fetch_source_file_by_hash(connection, file_hash)
 
 
+def update_source_file_processing_result(
+    *,
+    file_id: UUID,
+    import_status: ImportStatus,
+    statement_start_date: date | None,
+    statement_end_date: date | None,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> SourceFileRecord:
+    """Update the final parser outcome fields for a source file."""
+
+    if connection is None:
+        with database_connection() as new_connection:
+            return _update_source_file_processing_result(
+                new_connection,
+                file_id=file_id,
+                import_status=import_status,
+                statement_start_date=statement_start_date,
+                statement_end_date=statement_end_date,
+            )
+
+    return _update_source_file_processing_result(
+        connection,
+        file_id=file_id,
+        import_status=import_status,
+        statement_start_date=statement_start_date,
+        statement_end_date=statement_end_date,
+    )
+
+
 def _insert_source_file(
     connection: duckdb.DuckDBPyConnection,
     record: SourceFileRecord,
@@ -134,6 +163,33 @@ def _insert_source_file(
         ],
     )
     return get_source_file_by_id(record.file_id, connection=connection)
+
+
+def _update_source_file_processing_result(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    file_id: UUID,
+    import_status: ImportStatus,
+    statement_start_date: date | None,
+    statement_end_date: date | None,
+) -> SourceFileRecord:
+    connection.execute(
+        """
+        UPDATE source_files
+        SET
+            import_status = ?,
+            statement_start_date = ?,
+            statement_end_date = ?
+        WHERE file_id = ?
+        """,
+        [
+            import_status.value,
+            statement_start_date,
+            statement_end_date,
+            str(file_id),
+        ],
+    )
+    return get_source_file_by_id(file_id, connection=connection)
 
 
 def _fetch_source_file(connection: duckdb.DuckDBPyConnection, file_id: UUID) -> SourceFileRecord:

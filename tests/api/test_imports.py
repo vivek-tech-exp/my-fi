@@ -1,6 +1,8 @@
 """Tests for the CSV upload endpoint."""
 
 import json
+from datetime import date
+from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 
@@ -34,11 +36,14 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert payload["parser_version"] == settings.default_parser_version
     assert payload["parser_name"] == "hdfc_csv_parser"
     assert payload["status"] == "RECEIVED"
+    assert payload["statement_start_date"] is None
+    assert payload["statement_end_date"] is None
     assert payload["encoding_detected"] == "utf-8"
     assert payload["delimiter_detected"] == ","
     assert payload["header_detected"] is True
     assert payload["raw_rows_recorded"] == 2
     assert payload["suspicious_rows_recorded"] == 0
+    assert payload["transactions_imported"] == 0
     assert payload["message"].startswith("File stored locally, raw rows were audited")
     assert stored_path.exists()
     assert stored_path.read_bytes() == file_bytes
@@ -188,6 +193,7 @@ def test_upload_csv_returns_existing_record_for_duplicate_file(
     assert second_payload["header_detected"] is True
     assert second_payload["raw_rows_recorded"] == 2
     assert second_payload["suspicious_rows_recorded"] == 0
+    assert second_payload["transactions_imported"] == 0
     assert second_payload["message"].startswith("Matching file already registered.")
 
     with duckdb.connect(str(settings.database_path), read_only=True) as connection:
@@ -220,6 +226,7 @@ def test_upload_csv_quarantines_unreadable_files(client: TestClient) -> None:
     assert payload["header_detected"] is False
     assert payload["raw_rows_recorded"] == 0
     assert payload["suspicious_rows_recorded"] == 0
+    assert payload["transactions_imported"] == 0
     assert payload["duplicate_file"] is False
     assert payload["message"].startswith("File was quarantined")
     assert "quarantine" in stored_path.parts
@@ -227,31 +234,45 @@ def test_upload_csv_quarantines_unreadable_files(client: TestClient) -> None:
     assert stored_path.read_bytes() == unreadable_bytes
 
 
-def test_upload_csv_flags_pre_header_rows_for_review(
+def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
     client: TestClient,
     settings: Settings,
 ) -> None:
     file_bytes = (
-        b"Statement Period: 01 Apr 2026 to 30 Apr 2026\n"
-        b"Date,Narration,Debit,Credit,Balance\n"
-        b"2026-04-01,Salary,,1000.00,1000.00\n"
+        b'"",,Account Statement\n'
+        b'"Jharkhand ",,,,Period,From 01/01/2026 To 15/04/2026\n'
+        b"Sl. No.,Transaction Date,Value Date,Description,"
+        b"Chq / Ref No.,Debit,Credit,Balance,Dr / Cr\n"
+        b"1,03-04-2026 19:40:46,03-04-2026,"
+        b"UPI/CAFE BREWSOME P/627219443204/resolve interna,"
+        b'UPI-609393884269,310.78,,"39,591.75",CR\n'
+        b"2,02-04-2026 19:56:53,02-04-2026,"
+        b"UPI/MANKONDA VIVEK/120977030678/UPI,"
+        b'UPI-609218418071,,"50,000.00","53,053.91",CR\n'
+        b'Closing balance,"as on 15/04/2026   INR 53,053.91"\n'
+        b"You may call our 24-hour Customer Contact Centre at our number 1860 266 2666\n"
     )
 
     response = client.post(
         "/imports/csv",
-        data={"bank_name": "hdfc"},
-        files={"file": ("statement_with_title.csv", file_bytes, "text/csv")},
+        data={"bank_name": "kotak", "account_id": "travel-fund"},
+        files={"file": ("kotak_statement.csv", file_bytes, "text/csv")},
     )
 
     assert response.status_code == 201
     payload = response.json()
 
-    assert payload["parser_name"] == "hdfc_csv_parser"
+    assert payload["parser_name"] == "kotak_csv_parser"
+    assert payload["status"] == "PASS"
     assert payload["header_detected"] is True
-    assert payload["raw_rows_recorded"] == 3
-    assert payload["suspicious_rows_recorded"] == 1
-    assert payload["message"].startswith(
-        "File stored locally, raw rows were audited, and suspicious"
+    assert payload["raw_rows_recorded"] == 7
+    assert payload["suspicious_rows_recorded"] == 0
+    assert payload["transactions_imported"] == 2
+    assert payload["statement_start_date"] == "2026-01-01"
+    assert payload["statement_end_date"] == "2026-04-15"
+    assert (
+        payload["message"]
+        == "File parsed and 2 transactions were imported into the canonical ledger."
     )
 
     with duckdb.connect(str(settings.database_path), read_only=True) as connection:
@@ -264,9 +285,73 @@ def test_upload_csv_flags_pre_header_rows_for_review(
             """,
             [payload["file_id"]],
         ).fetchall()
+        source_file = connection.execute(
+            """
+            SELECT import_status, statement_start_date, statement_end_date
+            FROM source_files
+            WHERE file_id = ?
+            """,
+            [payload["file_id"]],
+        ).fetchone()
+        canonical_rows = connection.execute(
+            """
+            SELECT
+                bank_name,
+                account_id,
+                transaction_date,
+                value_date,
+                description_raw,
+                amount,
+                direction,
+                balance,
+                currency,
+                source_row_number,
+                reference_number,
+                duplicate_confidence
+            FROM canonical_transactions
+            WHERE source_file_id = ?
+            ORDER BY source_row_number
+            """,
+            [payload["file_id"]],
+        ).fetchall()
 
     assert raw_rows == [
-        (1, "suspicious", "content_before_header", False),
-        (2, "ignored", "header_row", True),
-        (3, "accepted", None, False),
+        (1, "ignored", "account_metadata", False),
+        (2, "ignored", "statement_metadata", False),
+        (3, "ignored", "header_row", True),
+        (4, "accepted", None, False),
+        (5, "accepted", None, False),
+        (6, "ignored", "statement_footer", False),
+        (7, "ignored", "statement_footer", False),
+    ]
+    assert source_file == ("PASS", date(2026, 1, 1), date(2026, 4, 15))
+    assert canonical_rows == [
+        (
+            "kotak",
+            "travel-fund",
+            date(2026, 4, 3),
+            date(2026, 4, 3),
+            "UPI/CAFE BREWSOME P/627219443204/resolve interna",
+            Decimal("310.78"),
+            "DEBIT",
+            Decimal("39591.75"),
+            "INR",
+            4,
+            "UPI-609393884269",
+            "UNIQUE",
+        ),
+        (
+            "kotak",
+            "travel-fund",
+            date(2026, 4, 2),
+            date(2026, 4, 2),
+            "UPI/MANKONDA VIVEK/120977030678/UPI",
+            Decimal("50000.00"),
+            "CREDIT",
+            Decimal("53053.91"),
+            "INR",
+            5,
+            "UPI-609218418071",
+            "UNIQUE",
+        ),
     ]

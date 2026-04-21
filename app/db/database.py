@@ -53,6 +53,33 @@ CREATE INDEX IF NOT EXISTS raw_rows_file_id_idx
 ON raw_rows(file_id, row_number);
 """
 
+CANONICAL_TRANSACTIONS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS canonical_transactions (
+    transaction_id VARCHAR PRIMARY KEY,
+    source_file_id VARCHAR NOT NULL,
+    raw_row_id VARCHAR NOT NULL,
+    bank_name VARCHAR NOT NULL,
+    account_id VARCHAR,
+    transaction_date DATE NOT NULL,
+    value_date DATE,
+    description_raw VARCHAR NOT NULL,
+    amount DECIMAL(18, 2) NOT NULL,
+    direction VARCHAR NOT NULL,
+    balance DECIMAL(18, 2),
+    currency VARCHAR NOT NULL,
+    source_row_number INTEGER NOT NULL,
+    reference_number VARCHAR,
+    transaction_fingerprint VARCHAR NOT NULL,
+    duplicate_confidence VARCHAR NOT NULL,
+    created_at TIMESTAMP NOT NULL
+);
+"""
+
+CANONICAL_TRANSACTIONS_FILE_ID_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS canonical_transactions_file_id_idx
+ON canonical_transactions(source_file_id, source_row_number);
+"""
+
 
 @contextmanager
 def database_connection() -> Iterator[duckdb.DuckDBPyConnection]:
@@ -74,3 +101,5 @@ def initialize_database() -> None:
         connection.execute(SOURCE_FILES_FILE_HASH_INDEX_SQL)
         connection.execute(RAW_ROWS_TABLE_SQL)
         connection.execute(RAW_ROWS_FILE_ID_INDEX_SQL)
+        connection.execute(CANONICAL_TRANSACTIONS_TABLE_SQL)
+        connection.execute(CANONICAL_TRANSACTIONS_FILE_ID_INDEX_SQL)

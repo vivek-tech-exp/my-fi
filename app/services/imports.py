@@ -7,9 +7,17 @@ from re import sub
 from uuid import UUID, uuid4
 
 from app.core.config import get_settings
+from app.db.canonical_transactions import (
+    get_canonical_transaction_count,
+    insert_canonical_transactions,
+)
 from app.db.database import database_connection
 from app.db.raw_rows import get_raw_row_audit_summary, insert_raw_rows
-from app.db.source_files import get_source_file_by_hash, insert_source_file
+from app.db.source_files import (
+    get_source_file_by_hash,
+    insert_source_file,
+    update_source_file_processing_result,
+)
 from app.models.imports import BankName, ImportStatus, SourceFileRecord, UploadCsvResponse
 from app.models.parsing import ParserInspectionResult
 from app.parsers import get_bank_parser
@@ -42,6 +50,7 @@ def store_uploaded_csv(
             existing_record,
             parser_name=existing_parser.parser_name,
             audit_summary=get_raw_row_audit_summary(existing_record.file_id),
+            transactions_imported=get_canonical_transaction_count(existing_record.file_id),
             duplicate_file=True,
             message="Matching file already registered. Returning existing import metadata.",
         )
@@ -72,7 +81,11 @@ def store_uploaded_csv(
         import_status=(
             ImportStatus.FAIL_NEEDS_REVIEW
             if normalization_result.quarantine_required
-            else ImportStatus.RECEIVED
+            else (
+                ImportStatus.PROCESSING
+                if parser.supports_canonical_mapping
+                else ImportStatus.RECEIVED
+            )
         ),
         encoding_detected=normalization_result.encoding_detected,
         delimiter_detected=normalization_result.delimiter_detected,
@@ -92,8 +105,25 @@ def store_uploaded_csv(
                     parser=parser,
                     normalized_text=normalization_result.normalized_text,
                     delimiter=normalization_result.delimiter_detected,
+                    account_id=account_id,
                 )
                 insert_raw_rows(inspection_result.raw_rows, connection=connection)
+                if parser.supports_canonical_mapping and inspection_result.canonical_transactions:
+                    insert_canonical_transactions(
+                        inspection_result.canonical_transactions,
+                        connection=connection,
+                    )
+                if (
+                    parser.supports_canonical_mapping
+                    and not normalization_result.quarantine_required
+                ):
+                    persisted_record = update_source_file_processing_result(
+                        file_id=file_id,
+                        import_status=_derive_import_status(inspection_result),
+                        statement_start_date=inspection_result.statement_start_date,
+                        statement_end_date=inspection_result.statement_end_date,
+                        connection=connection,
+                    )
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
@@ -112,6 +142,7 @@ def store_uploaded_csv(
                 existing_record,
                 parser_name=existing_parser.parser_name,
                 audit_summary=get_raw_row_audit_summary(existing_record.file_id),
+                transactions_imported=get_canonical_transaction_count(existing_record.file_id),
                 duplicate_file=True,
                 message="Matching file already registered. Returning existing import metadata.",
             )
@@ -123,10 +154,12 @@ def store_uploaded_csv(
         persisted_record,
         parser_name=parser.parser_name,
         audit_summary=inspection_result,
+        transactions_imported=inspection_result.transactions_imported,
         duplicate_file=False,
         message=_build_upload_message(
             quarantine_required=normalization_result.quarantine_required,
             inspection_result=inspection_result,
+            supports_canonical_mapping=parser.supports_canonical_mapping,
         ),
     )
 
@@ -148,6 +181,7 @@ def _inspect_normalized_file(
     parser: BaseCsvParser,
     normalized_text: str | None,
     delimiter: str | None,
+    account_id: str | None,
 ) -> ParserInspectionResult:
     if normalized_text is None:
         return ParserInspectionResult(
@@ -159,6 +193,7 @@ def _inspect_normalized_file(
         file_id=file_id,
         normalized_text=normalized_text,
         delimiter=delimiter,
+        account_id=account_id,
     )
 
 
@@ -166,11 +201,24 @@ def _build_upload_message(
     *,
     quarantine_required: bool,
     inspection_result: ParserInspectionResult,
+    supports_canonical_mapping: bool,
 ) -> str:
     if quarantine_required:
         return (
             "File was quarantined after normalization failed. Review the source file before "
             "attempting parser execution."
+        )
+
+    if supports_canonical_mapping and inspection_result.transactions_imported > 0:
+        if inspection_result.suspicious_rows_recorded > 0:
+            return (
+                f"File parsed and {inspection_result.transactions_imported} transactions were "
+                "imported into the canonical ledger with warnings."
+            )
+
+        return (
+            f"File parsed and {inspection_result.transactions_imported} transactions were "
+            "imported into the canonical ledger."
         )
 
     if inspection_result.suspicious_rows_recorded > 0:
@@ -183,3 +231,13 @@ def _build_upload_message(
         "File stored locally, raw rows were audited, and parser scaffolding captured "
         "header and row metadata for later canonical mapping."
     )
+
+
+def _derive_import_status(inspection_result: ParserInspectionResult) -> ImportStatus:
+    if inspection_result.transactions_imported == 0:
+        return ImportStatus.FAIL_NEEDS_REVIEW
+
+    if inspection_result.suspicious_rows_recorded > 0:
+        return ImportStatus.PASS_WITH_WARNINGS
+
+    return ImportStatus.PASS

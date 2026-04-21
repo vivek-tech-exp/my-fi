@@ -52,6 +52,10 @@ class ParserInspectionResult(RawRowAuditSummary):
     header_row_number: int | None = Field(default=None, ge=1)
     statement_start_date: date | None = None
     statement_end_date: date | None = None
+    duplicate_transactions_detected: int = Field(default=0, ge=0)
+    exact_duplicate_transactions: int = Field(default=0, ge=0)
+    probable_duplicate_transactions: int = Field(default=0, ge=0)
+    ambiguous_transactions_detected: int = Field(default=0, ge=0)
     raw_rows: list[RawRowRecord] = Field(default_factory=list)
     canonical_transactions: list[CanonicalTransactionRecord] = Field(default_factory=list)
 

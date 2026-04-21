@@ -283,24 +283,30 @@ class BaseCsvParser(ABC):
         balance: str | None,
         reference_number: str | None,
     ) -> str:
-        """Build a stable placeholder fingerprint until duplicate logic is added."""
+        """Build the account-scoped duplicate-protection fingerprint."""
 
         from hashlib import sha256
 
-        normalized_description = normalized_header_token(description_raw)
-        fingerprint_input = "|".join(
-            [
-                self.bank_name.value,
-                account_id or "",
-                transaction_date,
-                value_date or "",
-                amount,
-                direction,
-                balance or "",
-                reference_number or "",
-                normalized_description,
-            ]
-        )
+        del reference_number
+
+        fingerprint_parts = [
+            self.bank_name.value,
+            account_id or "",
+            transaction_date,
+            direction,
+            amount,
+        ]
+        if balance is not None:
+            fingerprint_parts.append(balance)
+        else:
+            fingerprint_parts.extend(
+                [
+                    value_date or "",
+                    normalized_header_token(description_raw),
+                ]
+            )
+
+        fingerprint_input = "|".join(fingerprint_parts)
         return sha256(fingerprint_input.encode("utf-8")).hexdigest()
 
     def build_canonical_transaction(

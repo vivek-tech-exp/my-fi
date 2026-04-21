@@ -43,6 +43,59 @@ FROM canonical_transactions
 WHERE source_file_id = ?
 """
 
+CANONICAL_TRANSACTION_BY_FINGERPRINT_SQL = """
+SELECT
+    transaction_id,
+    source_file_id,
+    raw_row_id,
+    bank_name,
+    account_id,
+    transaction_date,
+    value_date,
+    description_raw,
+    amount,
+    direction,
+    balance,
+    currency,
+    source_row_number,
+    reference_number,
+    transaction_fingerprint,
+    duplicate_confidence,
+    created_at
+FROM canonical_transactions
+WHERE transaction_fingerprint = ?
+LIMIT 1
+"""
+
+CANONICAL_TRANSACTION_DUPLICATE_CANDIDATES_SQL = """
+SELECT
+    transaction_id,
+    source_file_id,
+    raw_row_id,
+    bank_name,
+    account_id,
+    transaction_date,
+    value_date,
+    description_raw,
+    amount,
+    direction,
+    balance,
+    currency,
+    source_row_number,
+    reference_number,
+    transaction_fingerprint,
+    duplicate_confidence,
+    created_at
+FROM canonical_transactions
+WHERE bank_name = ?
+  AND COALESCE(account_id, '') = ?
+  AND transaction_date = ?
+  AND direction = ?
+  AND amount = ?
+  AND transaction_fingerprint <> ?
+ORDER BY created_at
+"""
+
 
 def insert_canonical_transactions(
     records: Sequence[CanonicalTransactionRecord],
@@ -88,6 +141,37 @@ def get_canonical_transaction_count(
             return _fetch_canonical_transaction_count(new_connection, file_id)
 
     return _fetch_canonical_transaction_count(connection, file_id)
+
+
+def get_canonical_transaction_by_fingerprint(
+    transaction_fingerprint: str,
+    *,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> CanonicalTransactionRecord | None:
+    """Fetch a canonical transaction by its duplicate-protection fingerprint."""
+
+    if connection is None:
+        with database_connection() as new_connection:
+            return _fetch_canonical_transaction_by_fingerprint(
+                new_connection,
+                transaction_fingerprint,
+            )
+
+    return _fetch_canonical_transaction_by_fingerprint(connection, transaction_fingerprint)
+
+
+def get_potential_duplicate_candidates(
+    record: CanonicalTransactionRecord,
+    *,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> list[CanonicalTransactionRecord]:
+    """Return same-account/date/direction/amount candidates for ambiguity checks."""
+
+    if connection is None:
+        with database_connection() as new_connection:
+            return _fetch_potential_duplicate_candidates(new_connection, record)
+
+    return _fetch_potential_duplicate_candidates(connection, record)
 
 
 def _insert_canonical_transactions(
@@ -159,6 +243,38 @@ def _fetch_canonical_transaction_count(
         return 0
 
     return cast(int, row[0])
+
+
+def _fetch_canonical_transaction_by_fingerprint(
+    connection: duckdb.DuckDBPyConnection,
+    transaction_fingerprint: str,
+) -> CanonicalTransactionRecord | None:
+    row = connection.execute(
+        CANONICAL_TRANSACTION_BY_FINGERPRINT_SQL,
+        [transaction_fingerprint],
+    ).fetchone()
+    if row is None:
+        return None
+
+    return _row_to_canonical_transaction_record(row)
+
+
+def _fetch_potential_duplicate_candidates(
+    connection: duckdb.DuckDBPyConnection,
+    record: CanonicalTransactionRecord,
+) -> list[CanonicalTransactionRecord]:
+    rows = connection.execute(
+        CANONICAL_TRANSACTION_DUPLICATE_CANDIDATES_SQL,
+        [
+            record.bank_name,
+            record.account_id or "",
+            record.transaction_date,
+            record.direction.value,
+            record.amount,
+            record.transaction_fingerprint,
+        ],
+    ).fetchall()
+    return [_row_to_canonical_transaction_record(row) for row in rows]
 
 
 def _row_to_canonical_transaction_record(row: tuple[object, ...]) -> CanonicalTransactionRecord:

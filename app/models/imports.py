@@ -78,6 +78,10 @@ class UploadCsvResponse(BaseModel):
     raw_rows_recorded: int = Field(default=0, ge=0)
     suspicious_rows_recorded: int = Field(default=0, ge=0)
     transactions_imported: int = Field(default=0, ge=0)
+    duplicate_transactions_detected: int = Field(default=0, ge=0)
+    exact_duplicate_transactions: int = Field(default=0, ge=0)
+    probable_duplicate_transactions: int = Field(default=0, ge=0)
+    ambiguous_transactions_detected: int = Field(default=0, ge=0)
     uploaded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     message: str
 
@@ -89,6 +93,10 @@ class UploadCsvResponse(BaseModel):
         parser_name: str,
         audit_summary: RawRowAuditSummary | None = None,
         transactions_imported: int = 0,
+        duplicate_transactions_detected: int = 0,
+        exact_duplicate_transactions: int = 0,
+        probable_duplicate_transactions: int = 0,
+        ambiguous_transactions_detected: int = 0,
         duplicate_file: bool = False,
         message: str,
     ) -> "UploadCsvResponse":
@@ -113,6 +121,10 @@ class UploadCsvResponse(BaseModel):
             raw_rows_recorded=raw_row_summary.raw_rows_recorded,
             suspicious_rows_recorded=raw_row_summary.suspicious_rows_recorded,
             transactions_imported=transactions_imported,
+            duplicate_transactions_detected=duplicate_transactions_detected,
+            exact_duplicate_transactions=exact_duplicate_transactions,
+            probable_duplicate_transactions=probable_duplicate_transactions,
+            ambiguous_transactions_detected=ambiguous_transactions_detected,
             uploaded_at=record.uploaded_at,
             message=message,
         )

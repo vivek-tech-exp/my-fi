@@ -16,7 +16,7 @@ This repository is being built in small vertical slices.
 * feature development should happen on short-lived branches
 * changes should merge back to `master` through pull requests
 
-The current completed milestone on `master` is `P5: parser framework and raw-row audit trail`.
+The current completed milestone on `master` is `P7: duplicate transaction protection`.
 
 ## Project Overview
 
@@ -41,7 +41,7 @@ The current branch-by-branch roadmap starts with the FastAPI foundation and then
 * Pydantic and `pydantic-settings`
 * `pytest`, `ruff`, and `mypy` for quality checks
 
-DuckDB now backs the source file registry. Transaction, report, and reconciliation tables will be added in later milestones.
+DuckDB now backs the source file registry, raw-row audit trail, and canonical Kotak transaction ledger. Report and reconciliation tables will be added in later milestones.
 
 ## Project Layout
 
@@ -123,7 +123,7 @@ Current supported bank names:
 * `kotak`
 * `federal`
 
-At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, persists a `source_files` registry row in DuckDB, runs the bank parser scaffolding, and returns structured metadata.
+At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, persists a `source_files` registry row in DuckDB, runs the bank parser, and returns structured metadata.
 
 Re-uploading the same file content is idempotent:
 
@@ -146,6 +146,21 @@ Each readable upload now also leaves a raw-row audit trail:
 * data rows are classified as `accepted`, `ignored`, or `suspicious`
 * every inspected row is persisted in the `raw_rows` DuckDB table
 * raw row payloads, parser name, parser version, and rejection reasons are preserved for later debugging
+
+Kotak uploads now also write accepted transaction rows into the canonical ledger:
+
+* account metadata preambles and footer rows are ignored safely
+* statement start and end dates are extracted when present
+* debit and credit values are normalized into explicit `amount` and `direction`
+* accepted rows are written to the `canonical_transactions` DuckDB table
+* every canonical transaction keeps source-file and source-row traceability
+
+Canonical transaction inserts now run duplicate protection before ledger writes:
+
+* exact duplicates with balances are skipped
+* no-balance fallback duplicates are skipped as probable duplicates
+* ambiguous same-account/date/amount candidates are inserted with warning metadata
+* upload responses include duplicate and ambiguity counters
 
 The registry currently tracks:
 

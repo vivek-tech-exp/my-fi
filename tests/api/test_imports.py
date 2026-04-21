@@ -44,6 +44,10 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert payload["raw_rows_recorded"] == 2
     assert payload["suspicious_rows_recorded"] == 0
     assert payload["transactions_imported"] == 0
+    assert payload["duplicate_transactions_detected"] == 0
+    assert payload["exact_duplicate_transactions"] == 0
+    assert payload["probable_duplicate_transactions"] == 0
+    assert payload["ambiguous_transactions_detected"] == 0
     assert payload["message"].startswith("File stored locally, raw rows were audited")
     assert stored_path.exists()
     assert stored_path.read_bytes() == file_bytes
@@ -194,6 +198,7 @@ def test_upload_csv_returns_existing_record_for_duplicate_file(
     assert second_payload["raw_rows_recorded"] == 2
     assert second_payload["suspicious_rows_recorded"] == 0
     assert second_payload["transactions_imported"] == 0
+    assert second_payload["duplicate_transactions_detected"] == 0
     assert second_payload["message"].startswith("Matching file already registered.")
 
     with duckdb.connect(str(settings.database_path), read_only=True) as connection:
@@ -227,6 +232,7 @@ def test_upload_csv_quarantines_unreadable_files(client: TestClient) -> None:
     assert payload["raw_rows_recorded"] == 0
     assert payload["suspicious_rows_recorded"] == 0
     assert payload["transactions_imported"] == 0
+    assert payload["duplicate_transactions_detected"] == 0
     assert payload["duplicate_file"] is False
     assert payload["message"].startswith("File was quarantined")
     assert "quarantine" in stored_path.parts
@@ -268,6 +274,10 @@ def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
     assert payload["raw_rows_recorded"] == 7
     assert payload["suspicious_rows_recorded"] == 0
     assert payload["transactions_imported"] == 2
+    assert payload["duplicate_transactions_detected"] == 0
+    assert payload["exact_duplicate_transactions"] == 0
+    assert payload["probable_duplicate_transactions"] == 0
+    assert payload["ambiguous_transactions_detected"] == 0
     assert payload["statement_start_date"] == "2026-01-01"
     assert payload["statement_end_date"] == "2026-04-15"
     assert (
@@ -354,4 +364,83 @@ def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
             "UPI-609218418071",
             "UNIQUE",
         ),
+    ]
+
+
+def test_upload_csv_skips_exact_duplicate_transactions_from_overlapping_kotak_file(
+    client: TestClient,
+    settings: Settings,
+) -> None:
+    first_file_bytes = (
+        b'"",,Account Statement\n'
+        b'"Jharkhand ",,,,Period,From 01/01/2026 To 15/04/2026\n'
+        b"Sl. No.,Transaction Date,Value Date,Description,"
+        b"Chq / Ref No.,Debit,Credit,Balance,Dr / Cr\n"
+        b"1,03-04-2026 19:40:46,03-04-2026,"
+        b"UPI/CAFE BREWSOME P/627219443204/resolve interna,"
+        b'UPI-609393884269,310.78,,"39,591.75",CR\n'
+        b"2,02-04-2026 19:56:53,02-04-2026,"
+        b"UPI/MANKONDA VIVEK/120977030678/UPI,"
+        b'UPI-609218418071,,"50,000.00","53,053.91",CR\n'
+        b'Closing balance,"as on 15/04/2026   INR 53,053.91"\n'
+    )
+    overlapping_file_bytes = (
+        b'"",,Account Statement\n'
+        b'"Jharkhand ",,,,Period,From 01/01/2026 To 16/04/2026\n'
+        b"Sl. No.,Transaction Date,Value Date,Description,"
+        b"Chq / Ref No.,Debit,Credit,Balance,Dr / Cr\n"
+        b"1,03-04-2026 19:40:46,03-04-2026,"
+        b"UPI/CAFE BREWSOME P/627219443204/resolve interna,"
+        b'UPI-609393884269,310.78,,"39,591.75",CR\n'
+        b"2,04-04-2026 11:00:00,04-04-2026,"
+        b"UPI/NEW COFFEE SHOP/111111111111/UPI,"
+        b'UPI-609400000000,125.00,,"52,928.91",CR\n'
+        b'Closing balance,"as on 16/04/2026   INR 52,928.91"\n'
+    )
+
+    first_response = client.post(
+        "/imports/csv",
+        data={"bank_name": "kotak", "account_id": "travel-fund"},
+        files={"file": ("kotak_statement_1.csv", first_file_bytes, "text/csv")},
+    )
+    second_response = client.post(
+        "/imports/csv",
+        data={"bank_name": "kotak", "account_id": "travel-fund"},
+        files={"file": ("kotak_statement_2.csv", overlapping_file_bytes, "text/csv")},
+    )
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 201
+    second_payload = second_response.json()
+
+    assert second_payload["duplicate_file"] is False
+    assert second_payload["status"] == "PASS_WITH_WARNINGS"
+    assert second_payload["transactions_imported"] == 1
+    assert second_payload["duplicate_transactions_detected"] == 1
+    assert second_payload["exact_duplicate_transactions"] == 1
+    assert second_payload["probable_duplicate_transactions"] == 0
+    assert second_payload["ambiguous_transactions_detected"] == 0
+    assert second_payload["message"] == (
+        "File parsed and 1 new transactions were imported into the canonical ledger "
+        "with duplicate warnings."
+    )
+
+    with duckdb.connect(str(settings.database_path), read_only=True) as connection:
+        canonical_count = connection.execute(
+            "SELECT COUNT(*) FROM canonical_transactions WHERE account_id = ?",
+            ["travel-fund"],
+        ).fetchone()
+        second_file_transactions = connection.execute(
+            """
+            SELECT description_raw, duplicate_confidence
+            FROM canonical_transactions
+            WHERE source_file_id = ?
+            ORDER BY source_row_number
+            """,
+            [second_payload["file_id"]],
+        ).fetchall()
+
+    assert canonical_count == (3,)
+    assert second_file_transactions == [
+        ("UPI/NEW COFFEE SHOP/111111111111/UPI", "UNIQUE"),
     ]

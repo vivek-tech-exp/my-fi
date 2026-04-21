@@ -22,6 +22,7 @@ from app.models.imports import BankName, ImportStatus, SourceFileRecord, UploadC
 from app.models.parsing import ParserInspectionResult
 from app.parsers import get_bank_parser
 from app.parsers.base import BaseCsvParser
+from app.services.duplicates import apply_duplicate_protection
 from app.services.normalization import normalize_uploaded_csv
 
 
@@ -109,6 +110,25 @@ def store_uploaded_csv(
                 )
                 insert_raw_rows(inspection_result.raw_rows, connection=connection)
                 if parser.supports_canonical_mapping and inspection_result.canonical_transactions:
+                    duplicate_result = apply_duplicate_protection(
+                        inspection_result.canonical_transactions,
+                        connection=connection,
+                    )
+                    inspection_result.canonical_transactions = (
+                        duplicate_result.transactions_to_insert
+                    )
+                    inspection_result.exact_duplicate_transactions = (
+                        duplicate_result.exact_duplicate_transactions
+                    )
+                    inspection_result.probable_duplicate_transactions = (
+                        duplicate_result.probable_duplicate_transactions
+                    )
+                    inspection_result.ambiguous_transactions_detected = (
+                        duplicate_result.ambiguous_transactions_detected
+                    )
+                    inspection_result.duplicate_transactions_detected = (
+                        duplicate_result.duplicate_transactions_detected
+                    )
                     insert_canonical_transactions(
                         inspection_result.canonical_transactions,
                         connection=connection,
@@ -155,6 +175,10 @@ def store_uploaded_csv(
         parser_name=parser.parser_name,
         audit_summary=inspection_result,
         transactions_imported=inspection_result.transactions_imported,
+        duplicate_transactions_detected=inspection_result.duplicate_transactions_detected,
+        exact_duplicate_transactions=inspection_result.exact_duplicate_transactions,
+        probable_duplicate_transactions=inspection_result.probable_duplicate_transactions,
+        ambiguous_transactions_detected=inspection_result.ambiguous_transactions_detected,
         duplicate_file=False,
         message=_build_upload_message(
             quarantine_required=normalization_result.quarantine_required,
@@ -210,6 +234,15 @@ def _build_upload_message(
         )
 
     if supports_canonical_mapping and inspection_result.transactions_imported > 0:
+        if (
+            inspection_result.duplicate_transactions_detected > 0
+            or inspection_result.ambiguous_transactions_detected > 0
+        ):
+            return (
+                f"File parsed and {inspection_result.transactions_imported} new transactions "
+                "were imported into the canonical ledger with duplicate warnings."
+            )
+
         if inspection_result.suspicious_rows_recorded > 0:
             return (
                 f"File parsed and {inspection_result.transactions_imported} transactions were "
@@ -219,6 +252,13 @@ def _build_upload_message(
         return (
             f"File parsed and {inspection_result.transactions_imported} transactions were "
             "imported into the canonical ledger."
+        )
+
+    if supports_canonical_mapping and inspection_result.duplicate_transactions_detected > 0:
+        return (
+            "File parsed successfully, but no new transactions were imported because "
+            f"{inspection_result.duplicate_transactions_detected} duplicate transactions "
+            "were skipped."
         )
 
     if inspection_result.suspicious_rows_recorded > 0:
@@ -235,9 +275,19 @@ def _build_upload_message(
 
 def _derive_import_status(inspection_result: ParserInspectionResult) -> ImportStatus:
     if inspection_result.transactions_imported == 0:
+        if (
+            inspection_result.duplicate_transactions_detected > 0
+            or inspection_result.ambiguous_transactions_detected > 0
+        ):
+            return ImportStatus.PASS_WITH_WARNINGS
+
         return ImportStatus.FAIL_NEEDS_REVIEW
 
-    if inspection_result.suspicious_rows_recorded > 0:
+    if (
+        inspection_result.suspicious_rows_recorded > 0
+        or inspection_result.duplicate_transactions_detected > 0
+        or inspection_result.ambiguous_transactions_detected > 0
+    ):
         return ImportStatus.PASS_WITH_WARNINGS
 
     return ImportStatus.PASS

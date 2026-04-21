@@ -10,7 +10,7 @@ The delivery strategy is:
 2. make the upload API usable from FastAPI Swagger UI at `/docs`
 3. ship one full bank vertical slice end to end with Kotak
 4. add validation, reporting, and safe reprocessing
-5. extend parser coverage to Kotak and Federal without collapsing bank-specific logic
+5. extend parser coverage to HDFC and Federal without collapsing bank-specific logic
 
 Project defaults for V1:
 
@@ -367,7 +367,7 @@ Done when:
 
 ---
 
-### P11. Extend to Kotak and Federal
+### P11. Extend to HDFC and Federal
 
 Priority: medium
 
@@ -375,7 +375,7 @@ Goal: add full bank coverage using the same ingestion framework while preserving
 
 Scope:
 
-* add Kotak parser plus fixtures and tests
+* add HDFC parser plus fixtures and tests
 * add Federal parser plus fixtures and tests
 * reuse the same normalization, duplicate detection, validation, and reporting layers
 * keep parser modules separated by bank

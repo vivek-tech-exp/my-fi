@@ -16,7 +16,7 @@ This repository is being built in small vertical slices.
 * feature development should happen on short-lived branches
 * changes should merge back to `master` through pull requests
 
-The current completed milestone on `master` is `P7: duplicate transaction protection`.
+The current completed milestone on `master` is `P9: import reports and inspection APIs`.
 
 ## Project Overview
 
@@ -41,7 +41,7 @@ The current branch-by-branch roadmap starts with the FastAPI foundation and then
 * Pydantic and `pydantic-settings`
 * `pytest`, `ruff`, and `mypy` for quality checks
 
-DuckDB now backs the source file registry, raw-row audit trail, and canonical Kotak transaction ledger. Report and reconciliation tables will be added in later milestones.
+DuckDB now backs the source file registry, raw-row audit trail, canonical Kotak transaction ledger, and validation reports.
 
 ## Project Layout
 
@@ -110,6 +110,10 @@ Available now:
 * `GET /`
 * `GET /health`
 * `POST /imports/csv`
+* `GET /imports`
+* `GET /imports/{file_id}`
+* `GET /imports/{file_id}/report`
+* `GET /imports/{file_id}/rows`
 
 The upload endpoint accepts:
 
@@ -123,7 +127,7 @@ Current supported bank names:
 * `kotak`
 * `federal`
 
-At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, persists a `source_files` registry row in DuckDB, runs the bank parser, and returns structured metadata.
+At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, persists a `source_files` registry row in DuckDB, runs the bank parser, validates the import, and returns structured metadata.
 
 Re-uploading the same file content is idempotent:
 
@@ -162,14 +166,29 @@ Canonical transaction inserts now run duplicate protection before ledger writes:
 * ambiguous same-account/date/amount candidates are inserted with warning metadata
 * upload responses include duplicate and ambiguity counters
 
+Every completed import now gets a validation report:
+
+* row counts are reconciled against parser output
+* suspicious rows and duplicate rows are surfaced as warnings
+* invalid headers, unreadable files, and empty canonical imports fail review
+* final import status is explicitly set to `PASS`, `PASS_WITH_WARNINGS`, or `FAIL_NEEDS_REVIEW`
+
+Use the inspection APIs from Swagger UI to review imports without querying DuckDB directly:
+
+* `GET /imports` lists import summaries
+* `GET /imports/{file_id}` returns import metadata and the latest validation report
+* `GET /imports/{file_id}/report` returns the validation report
+* `GET /imports/{file_id}/rows` returns the raw-row audit trail
+
 The registry currently tracks:
 
 * file identity and hash metadata
 * current import lifecycle status
 * parser version
-* placeholder fields for statement and file-detection metadata
 * duplicate-file detection at the file hash level
 * detected file encoding and delimiter metadata
+* statement dates when the parser can extract them
+* latest validation status
 
 The parser audit trail currently tracks:
 

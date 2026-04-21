@@ -20,6 +20,7 @@ from app.db.source_files import (
     insert_source_file,
     update_source_file_processing_result,
 )
+from app.db.validation_reports import get_validation_report_by_file_id, upsert_validation_report
 from app.models.imports import (
     BankName,
     ImportStatus,
@@ -53,18 +54,7 @@ def store_uploaded_csv(
     file_hash = sha256(file_bytes).hexdigest()
     existing_record = get_source_file_by_hash(file_hash)
     if existing_record is not None:
-        existing_parser = get_bank_parser(
-            bank_name=existing_record.bank_name,
-            parser_version=existing_record.parser_version,
-        )
-        return UploadCsvResponse.from_source_file_record(
-            existing_record,
-            parser_name=existing_parser.parser_name,
-            audit_summary=get_raw_row_audit_summary(existing_record.file_id),
-            transactions_imported=get_canonical_transaction_count(existing_record.file_id),
-            duplicate_file=True,
-            message="Matching file already registered. Returning existing import metadata.",
-        )
+        return _build_duplicate_upload_response(existing_record)
 
     file_id = uuid4()
     normalization_result = normalize_uploaded_csv(file_bytes)
@@ -127,21 +117,10 @@ def store_uploaded_csv(
     except Exception:
         existing_record = get_source_file_by_hash(file_hash)
         if existing_record is not None:
-            existing_parser = get_bank_parser(
-                bank_name=existing_record.bank_name,
-                parser_version=existing_record.parser_version,
-            )
             if stored_path != Path(existing_record.stored_path):
                 stored_path.unlink(missing_ok=True)
 
-            return UploadCsvResponse.from_source_file_record(
-                existing_record,
-                parser_name=existing_parser.parser_name,
-                audit_summary=get_raw_row_audit_summary(existing_record.file_id),
-                transactions_imported=get_canonical_transaction_count(existing_record.file_id),
-                duplicate_file=True,
-                message="Matching file already registered. Returning existing import metadata.",
-            )
+            return _build_duplicate_upload_response(existing_record)
 
         stored_path.unlink(missing_ok=True)
         raise
@@ -211,6 +190,7 @@ def _process_source_file_record(
         quarantine_required=normalization_result.quarantine_required,
         normalization_failure_reason=normalization_result.failure_reason,
     )
+    upsert_validation_report(validation_report, connection=connection)
 
     persisted_record = source_file
     if parser.supports_canonical_mapping or normalization_result.quarantine_required:
@@ -223,6 +203,25 @@ def _process_source_file_record(
         )
 
     return persisted_record, inspection_result, validation_report
+
+
+def _build_duplicate_upload_response(record: SourceFileRecord) -> UploadCsvResponse:
+    existing_parser = get_bank_parser(
+        bank_name=record.bank_name,
+        parser_version=record.parser_version,
+    )
+    validation_report = get_validation_report_by_file_id(record.file_id)
+    return UploadCsvResponse.from_source_file_record(
+        record,
+        parser_name=existing_parser.parser_name,
+        audit_summary=get_raw_row_audit_summary(record.file_id),
+        transactions_imported=get_canonical_transaction_count(record.file_id),
+        duplicate_transactions_detected=(
+            validation_report.duplicate_rows if validation_report is not None else 0
+        ),
+        duplicate_file=True,
+        message="Matching file already registered. Returning existing import metadata.",
+    )
 
 
 def _sanitize_filename(filename: str) -> str:

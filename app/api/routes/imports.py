@@ -1,10 +1,22 @@
 """Routes for source file imports."""
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile, status
 
-from app.models.imports import BankName, UploadCsvResponse
+from app.db.raw_rows import get_raw_rows_by_file_id
+from app.db.source_files import get_source_file_by_id, list_source_files
+from app.db.validation_reports import get_validation_report_by_file_id
+from app.models.imports import (
+    BankName,
+    ImportDetailResponse,
+    ImportSummaryResponse,
+    SourceFileRecord,
+    UploadCsvResponse,
+)
+from app.models.parsing import RawRowRecord
+from app.models.validation import ValidationReportRecord
 from app.services.imports import store_uploaded_csv
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -51,3 +63,62 @@ async def upload_csv(
         status.HTTP_200_OK if upload_response.duplicate_file else status.HTTP_201_CREATED
     )
     return upload_response
+
+
+@router.get(
+    "",
+    response_model=list[ImportSummaryResponse],
+    summary="List import metadata",
+)
+def list_imports() -> list[ImportSummaryResponse]:
+    return [ImportSummaryResponse.from_source_file_record(record) for record in list_source_files()]
+
+
+@router.get(
+    "/{file_id}",
+    response_model=ImportDetailResponse,
+    summary="Get import metadata",
+)
+def get_import(file_id: UUID) -> ImportDetailResponse:
+    record = _get_source_file_or_404(file_id)
+    return ImportDetailResponse.from_source_file_record(
+        record,
+        report=get_validation_report_by_file_id(file_id),
+    )
+
+
+@router.get(
+    "/{file_id}/report",
+    response_model=ValidationReportRecord,
+    summary="Get import validation report",
+)
+def get_import_report(file_id: UUID) -> ValidationReportRecord:
+    _get_source_file_or_404(file_id)
+    report = get_validation_report_by_file_id(file_id)
+    if report is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Validation report was not found for this import.",
+        )
+
+    return report
+
+
+@router.get(
+    "/{file_id}/rows",
+    response_model=list[RawRowRecord],
+    summary="Get raw-row audit trail",
+)
+def get_import_rows(file_id: UUID) -> list[RawRowRecord]:
+    _get_source_file_or_404(file_id)
+    return get_raw_rows_by_file_id(file_id)
+
+
+def _get_source_file_or_404(file_id: UUID) -> SourceFileRecord:
+    try:
+        return get_source_file_by_id(file_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc

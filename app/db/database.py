@@ -80,6 +80,29 @@ CREATE INDEX IF NOT EXISTS canonical_transactions_file_id_idx
 ON canonical_transactions(source_file_id, source_row_number);
 """
 
+VALIDATION_REPORTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS validation_reports (
+    report_id VARCHAR PRIMARY KEY,
+    file_id VARCHAR NOT NULL,
+    total_rows INTEGER NOT NULL,
+    accepted_rows INTEGER NOT NULL,
+    ignored_rows INTEGER NOT NULL,
+    suspicious_rows INTEGER NOT NULL,
+    duplicate_rows INTEGER NOT NULL,
+    transactions_imported INTEGER NOT NULL,
+    reconciliation_status VARCHAR NOT NULL,
+    ledger_continuity_status VARCHAR NOT NULL,
+    final_status VARCHAR NOT NULL,
+    messages VARCHAR NOT NULL,
+    generated_at TIMESTAMP NOT NULL
+);
+"""
+
+VALIDATION_REPORTS_FILE_ID_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS validation_reports_file_id_idx
+ON validation_reports(file_id, generated_at);
+"""
+
 
 @contextmanager
 def database_connection() -> Iterator[duckdb.DuckDBPyConnection]:
@@ -103,3 +126,5 @@ def initialize_database() -> None:
         connection.execute(RAW_ROWS_FILE_ID_INDEX_SQL)
         connection.execute(CANONICAL_TRANSACTIONS_TABLE_SQL)
         connection.execute(CANONICAL_TRANSACTIONS_FILE_ID_INDEX_SQL)
+        connection.execute(VALIDATION_REPORTS_TABLE_SQL)
+        connection.execute(VALIDATION_REPORTS_FILE_ID_INDEX_SQL)

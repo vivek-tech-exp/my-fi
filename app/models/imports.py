@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.models.parsing import RawRowAuditSummary
+from app.models.validation import ValidationReportRecord
 
 
 class BankName(StrEnum):
@@ -127,4 +128,69 @@ class UploadCsvResponse(BaseModel):
             ambiguous_transactions_detected=ambiguous_transactions_detected,
             uploaded_at=record.uploaded_at,
             message=message,
+        )
+
+
+class ImportSummaryResponse(BaseModel):
+    """Summary metadata for an import."""
+
+    file_id: UUID
+    bank_name: BankName
+    account_id: str | None = None
+    original_filename: str
+    file_hash: str
+    status: ImportStatus
+    uploaded_at: datetime
+    parser_version: str
+    statement_start_date: date | None = None
+    statement_end_date: date | None = None
+
+    @classmethod
+    def from_source_file_record(cls, record: SourceFileRecord) -> "ImportSummaryResponse":
+        return cls(
+            file_id=record.file_id,
+            bank_name=record.bank_name,
+            account_id=record.account_id,
+            original_filename=record.original_filename,
+            file_hash=record.file_hash,
+            status=record.import_status,
+            uploaded_at=record.uploaded_at,
+            parser_version=record.parser_version,
+            statement_start_date=record.statement_start_date,
+            statement_end_date=record.statement_end_date,
+        )
+
+
+class ImportDetailResponse(ImportSummaryResponse):
+    """Detailed import metadata."""
+
+    stored_path: str
+    file_size_bytes: int
+    encoding_detected: str | None = None
+    delimiter_detected: str | None = None
+    report: ValidationReportRecord | None = None
+
+    @classmethod
+    def from_source_file_record(
+        cls,
+        record: SourceFileRecord,
+        *,
+        report: ValidationReportRecord | None = None,
+    ) -> "ImportDetailResponse":
+        return cls(
+            file_id=record.file_id,
+            bank_name=record.bank_name,
+            account_id=record.account_id,
+            original_filename=record.original_filename,
+            file_hash=record.file_hash,
+            status=record.import_status,
+            uploaded_at=record.uploaded_at,
+            parser_version=record.parser_version,
+            statement_start_date=record.statement_start_date,
+            statement_end_date=record.statement_end_date,
+            stored_path=record.stored_path,
+            file_size_bytes=record.file_size_bytes,
+            encoding_detected=record.encoding_detected,
+            delimiter_detected=record.delimiter_detected,
+            report=report,
         )

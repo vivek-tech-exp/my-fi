@@ -1,7 +1,7 @@
 """Kotak parser implementation for canonical transaction mapping."""
 
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from re import Match, search
 
 from app.models.imports import BankName
@@ -66,6 +66,12 @@ class KotakCsvParser(BaseCsvParser):
             return RowClassification(
                 row_type=RawRowType.SUSPICIOUS,
                 rejection_reason="column_count_mismatch",
+            )
+
+        if not self._has_valid_date_shape(columns):
+            return RowClassification(
+                row_type=RawRowType.SUSPICIOUS,
+                rejection_reason="invalid_date_shape",
             )
 
         if not self._has_valid_amount_shape(columns):
@@ -168,12 +174,24 @@ class KotakCsvParser(BaseCsvParser):
 
         return debit_amount is None or credit_amount is None
 
+    def _has_valid_date_shape(self, columns: list[str]) -> bool:
+        try:
+            datetime.strptime(columns[1].strip(), KOTAK_TRANSACTION_DATE_FORMAT)
+            datetime.strptime(columns[2].strip(), KOTAK_VALUE_DATE_FORMAT)
+        except ValueError:
+            return False
+
+        return True
+
     def _parse_decimal(self, raw_value: str) -> Decimal | None:
         stripped_value = raw_value.strip().replace(",", "")
         if not stripped_value:
             return None
 
-        return Decimal(stripped_value)
+        try:
+            return Decimal(stripped_value)
+        except InvalidOperation:
+            return None
 
     def _parse_balance(self, raw_balance: str, raw_side: str) -> Decimal | None:
         balance = self._parse_decimal(raw_balance)

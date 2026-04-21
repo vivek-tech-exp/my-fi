@@ -24,6 +24,12 @@ def test_hdfc_parser_detects_header_and_accepts_data_rows() -> None:
     assert inspection_result.accepted_rows_recorded == 1
     assert inspection_result.ignored_rows_recorded == 1
     assert inspection_result.suspicious_rows_recorded == 0
+    assert inspection_result.transactions_imported == 1
+    transaction = inspection_result.canonical_transactions[0]
+    assert transaction.bank_name == "hdfc"
+    assert transaction.amount == Decimal("1000.00")
+    assert transaction.direction == "CREDIT"
+    assert transaction.balance == Decimal("1000.00")
 
 
 def test_kotak_parser_extracts_statement_dates_and_canonical_transactions() -> None:
@@ -81,3 +87,9 @@ def test_federal_parser_uses_bank_specific_header_tokens() -> None:
     assert inspection_result.raw_rows_recorded == 2
     assert inspection_result.accepted_rows_recorded == 1
     assert inspection_result.ignored_rows_recorded == 1
+    assert inspection_result.transactions_imported == 1
+    transaction = inspection_result.canonical_transactions[0]
+    assert transaction.bank_name == "federal"
+    assert transaction.amount == Decimal("1000.00")
+    assert transaction.direction == "CREDIT"
+    assert transaction.balance == Decimal("1000.00")

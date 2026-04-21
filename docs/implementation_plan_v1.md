@@ -19,6 +19,23 @@ Project defaults for V1:
 * parser rollout: one bank at a time
 * first bank: Kotak
 
+## Execution Status
+
+All planned V1 milestones `P0` through `P11` have been implemented through sequential milestone branches and merged to `master`.
+
+Delivered scope:
+
+* FastAPI service bootstrap and Swagger UI upload surface
+* CSV upload storage, source-file registry, and file-hash idempotency
+* pre-parse normalization with quarantine handling
+* bank-specific parser framework with raw-row audit storage
+* Kotak canonical transaction ingestion
+* duplicate transaction protection
+* validation reports and import trust statuses
+* import inspection APIs
+* stored-file reprocessing
+* HDFC, Kotak, and Federal parser support through the same ingestion workflow
+
 ---
 
 ## Prioritized Execution Order
@@ -482,7 +499,7 @@ Implementation bias:
 
 ---
 
-## First Step to Execute
+## Original First Step
 
 Start with `P0. Bootstrap the runnable service`.
 

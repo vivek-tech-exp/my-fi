@@ -35,7 +35,7 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert payload["file_size_bytes"] == len(file_bytes)
     assert payload["parser_version"] == settings.default_parser_version
     assert payload["parser_name"] == "hdfc_csv_parser"
-    assert payload["status"] == "RECEIVED"
+    assert payload["status"] == "PASS"
     assert payload["statement_start_date"] is None
     assert payload["statement_end_date"] is None
     assert payload["encoding_detected"] == "utf-8"
@@ -43,12 +43,14 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert payload["header_detected"] is True
     assert payload["raw_rows_recorded"] == 2
     assert payload["suspicious_rows_recorded"] == 0
-    assert payload["transactions_imported"] == 0
+    assert payload["transactions_imported"] == 1
     assert payload["duplicate_transactions_detected"] == 0
     assert payload["exact_duplicate_transactions"] == 0
     assert payload["probable_duplicate_transactions"] == 0
     assert payload["ambiguous_transactions_detected"] == 0
-    assert payload["message"].startswith("File stored locally, raw rows were audited")
+    assert payload["message"] == (
+        "File parsed and 1 transactions were imported into the canonical ledger."
+    )
     assert stored_path.exists()
     assert stored_path.read_bytes() == file_bytes
     assert "hdfc" in stored_path.parts
@@ -84,7 +86,7 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert row[4] == payload["file_hash"]
     assert row[5] == len(file_bytes)
     assert row[6] == settings.default_parser_version
-    assert row[7] == "RECEIVED"
+    assert row[7] == "PASS"
     assert row[8] is None
     assert row[9] is None
     assert row[10] == "utf-8"
@@ -129,6 +131,36 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert raw_rows[1][6] is None
     assert raw_rows[1][7] is False
     assert raw_rows[1][8] is False
+
+    with duckdb.connect(str(settings.database_path), read_only=True) as connection:
+        canonical_rows = connection.execute(
+            """
+            SELECT bank_name, account_id, description_raw, amount, direction, balance
+            FROM canonical_transactions
+            WHERE source_file_id = ?
+            """,
+            [payload["file_id"]],
+        ).fetchall()
+        validation_report = connection.execute(
+            """
+            SELECT total_rows, accepted_rows, ignored_rows, final_status
+            FROM validation_reports
+            WHERE file_id = ?
+            """,
+            [payload["file_id"]],
+        ).fetchone()
+
+    assert canonical_rows == [
+        (
+            "hdfc",
+            "primary-checking",
+            "Salary",
+            Decimal("1000.00"),
+            "CREDIT",
+            Decimal("1000.00"),
+        )
+    ]
+    assert validation_report == (2, 1, 1, "PASS")
 
 
 def test_upload_csv_rejects_empty_files(client: TestClient) -> None:
@@ -197,7 +229,7 @@ def test_upload_csv_returns_existing_record_for_duplicate_file(
     assert second_payload["header_detected"] is True
     assert second_payload["raw_rows_recorded"] == 2
     assert second_payload["suspicious_rows_recorded"] == 0
-    assert second_payload["transactions_imported"] == 0
+    assert second_payload["transactions_imported"] == 1
     assert second_payload["duplicate_transactions_detected"] == 0
     assert second_payload["message"].startswith("Matching file already registered.")
 

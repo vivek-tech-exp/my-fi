@@ -1,6 +1,6 @@
 """Services for source-file intake and local storage."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from pathlib import Path
 from re import sub
@@ -34,6 +34,7 @@ from app.models.imports import (
     SourceFileRecord,
     UploadCsvResponse,
 )
+from app.models.ledger import CanonicalTransactionRecord
 from app.models.parsing import ParserInspectionResult
 from app.models.validation import ValidationReportRecord
 from app.parsers import get_bank_parser
@@ -217,6 +218,20 @@ def _process_source_file_record(
         delimiter=normalization_result.delimiter_detected,
         account_id=account_id,
     )
+    statement_start_date, statement_end_date = _resolve_statement_period(inspection_result)
+    inspection_result.statement_start_date = statement_start_date
+    inspection_result.statement_end_date = statement_end_date
+    effective_account_id = _resolve_effective_account_id(
+        bank_name=source_file.bank_name,
+        requested_account_id=account_id,
+        statement_start_date=statement_start_date,
+        statement_end_date=statement_end_date,
+    )
+    inspection_result.canonical_transactions = _apply_account_id_to_transactions(
+        inspection_result.canonical_transactions,
+        account_id=effective_account_id,
+    )
+
     insert_raw_rows(inspection_result.raw_rows, connection=connection)
     if parser.supports_canonical_mapping and inspection_result.canonical_transactions:
         duplicate_result = apply_duplicate_protection(
@@ -257,6 +272,7 @@ def _process_source_file_record(
             import_status=ImportStatus(validation_report.final_status),
             statement_start_date=inspection_result.statement_start_date,
             statement_end_date=inspection_result.statement_end_date,
+            account_id=effective_account_id,
             parser_version=parser.parser_version,
             connection=connection,
         )
@@ -281,6 +297,71 @@ def _build_duplicate_upload_response(record: SourceFileRecord) -> UploadCsvRespo
         duplicate_file=True,
         message="Matching file already registered. Returning existing import metadata.",
     )
+
+
+def _resolve_statement_period(
+    inspection_result: ParserInspectionResult,
+) -> tuple[date | None, date | None]:
+    statement_start_date = inspection_result.statement_start_date
+    statement_end_date = inspection_result.statement_end_date
+    if statement_start_date is not None and statement_end_date is not None:
+        return statement_start_date, statement_end_date
+
+    if not inspection_result.canonical_transactions:
+        return statement_start_date, statement_end_date
+
+    transaction_dates = [
+        transaction.transaction_date for transaction in inspection_result.canonical_transactions
+    ]
+    return (
+        statement_start_date or min(transaction_dates),
+        statement_end_date or max(transaction_dates),
+    )
+
+
+def _resolve_effective_account_id(
+    *,
+    bank_name: BankName,
+    requested_account_id: str | None,
+    statement_start_date: date | None,
+    statement_end_date: date | None,
+) -> str:
+    if requested_account_id:
+        normalized_account_id = requested_account_id.strip()
+        if normalized_account_id:
+            return normalized_account_id
+
+    return _build_generated_account_id(
+        bank_name=bank_name,
+        statement_start_date=statement_start_date,
+        statement_end_date=statement_end_date,
+    )
+
+
+def _build_generated_account_id(
+    *,
+    bank_name: BankName,
+    statement_start_date: date | None,
+    statement_end_date: date | None,
+) -> str:
+    start_token = (
+        statement_start_date.isoformat() if statement_start_date is not None else "unknown-start"
+    )
+    end_token = statement_end_date.isoformat() if statement_end_date is not None else "unknown-end"
+    return f"{bank_name.value}:{start_token}:{end_token}"
+
+
+def _apply_account_id_to_transactions(
+    transactions: list[CanonicalTransactionRecord],
+    *,
+    account_id: str,
+) -> list[CanonicalTransactionRecord]:
+    return [
+        transaction
+        if transaction.account_id == account_id
+        else transaction.model_copy(update={"account_id": account_id})
+        for transaction in transactions
+    ]
 
 
 def _sanitize_filename(filename: str) -> str:

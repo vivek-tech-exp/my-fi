@@ -36,8 +36,8 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert payload["parser_version"] == settings.default_parser_version
     assert payload["parser_name"] == "hdfc_csv_parser"
     assert payload["status"] == "PASS"
-    assert payload["statement_start_date"] is None
-    assert payload["statement_end_date"] is None
+    assert payload["statement_start_date"] == "2026-04-01"
+    assert payload["statement_end_date"] == "2026-04-01"
     assert payload["encoding_detected"] == "utf-8"
     assert payload["delimiter_detected"] == ","
     assert payload["header_detected"] is True
@@ -87,8 +87,8 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert row[5] == len(file_bytes)
     assert row[6] == settings.default_parser_version
     assert row[7] == "PASS"
-    assert row[8] is None
-    assert row[9] is None
+    assert row[8] == date(2026, 4, 1)
+    assert row[9] == date(2026, 4, 1)
     assert row[10] == "utf-8"
     assert row[11] == ","
 
@@ -301,7 +301,7 @@ def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
     payload = response.json()
 
     assert payload["parser_name"] == "kotak_csv_parser"
-    assert payload["status"] == "PASS"
+    assert payload["status"] == "PASS_WITH_WARNINGS"
     assert payload["header_detected"] is True
     assert payload["raw_rows_recorded"] == 7
     assert payload["suspicious_rows_recorded"] == 0
@@ -366,7 +366,7 @@ def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
         (6, "ignored", "statement_footer", False),
         (7, "ignored", "statement_footer", False),
     ]
-    assert source_file == ("PASS", date(2026, 1, 1), date(2026, 4, 15))
+    assert source_file == ("PASS_WITH_WARNINGS", date(2026, 1, 1), date(2026, 4, 15))
     assert canonical_rows == [
         (
             "kotak",
@@ -397,6 +397,45 @@ def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
             "UNIQUE",
         ),
     ]
+
+
+def test_upload_csv_auto_generates_account_id_from_statement_period(
+    client: TestClient,
+    settings: Settings,
+) -> None:
+    file_bytes = (
+        b'"",,Account Statement\n'
+        b'"Jharkhand ",,,,Period,From 01/01/2026 To 15/04/2026\n'
+        b"Sl. No.,Transaction Date,Value Date,Description,"
+        b"Chq / Ref No.,Debit,Credit,Balance,Dr / Cr\n"
+        b"1,03-04-2026 19:40:46,03-04-2026,"
+        b"UPI/CAFE BREWSOME P/627219443204/resolve interna,"
+        b'UPI-609393884269,310.78,,"39,591.75",CR\n'
+        b'Closing balance,"as on 15/04/2026   INR 39,591.75"\n'
+    )
+
+    response = client.post(
+        "/imports/csv",
+        data={"bank_name": "kotak"},
+        files={"file": ("kotak_statement.csv", file_bytes, "text/csv")},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["account_id"] == "kotak:2026-01-01:2026-04-15"
+
+    with duckdb.connect(str(settings.database_path), read_only=True) as connection:
+        source_file_account = connection.execute(
+            "SELECT account_id FROM source_files WHERE file_id = ?",
+            [payload["file_id"]],
+        ).fetchone()
+        canonical_account_ids = connection.execute(
+            "SELECT DISTINCT account_id FROM canonical_transactions WHERE source_file_id = ?",
+            [payload["file_id"]],
+        ).fetchall()
+
+    assert source_file_account == ("kotak:2026-01-01:2026-04-15",)
+    assert canonical_account_ids == [("kotak:2026-01-01:2026-04-15",)]
 
 
 def test_import_inspection_endpoints_return_reports_and_rows(
@@ -437,7 +476,7 @@ def test_import_inspection_endpoints_return_reports_and_rows(
     assert detail_response.status_code == 200
     detail_payload = detail_response.json()
     assert detail_payload["file_id"] == file_id
-    assert detail_payload["status"] == "PASS"
+    assert detail_payload["status"] == "PASS_WITH_WARNINGS"
     assert detail_payload["report"]["transactions_imported"] == 2
 
     assert report_response.status_code == 200
@@ -448,7 +487,7 @@ def test_import_inspection_endpoints_return_reports_and_rows(
     assert report_payload["ignored_rows"] == 4
     assert report_payload["suspicious_rows"] == 0
     assert report_payload["transactions_imported"] == 2
-    assert report_payload["final_status"] == "PASS"
+    assert report_payload["final_status"] == "PASS_WITH_WARNINGS"
 
     assert rows_response.status_code == 200
     rows_payload = rows_response.json()
@@ -461,7 +500,7 @@ def test_import_inspection_endpoints_return_reports_and_rows(
     assert reprocess_response.status_code == 200
     reprocess_payload = reprocess_response.json()
     assert reprocess_payload["file_id"] == file_id
-    assert reprocess_payload["status"] == "PASS"
+    assert reprocess_payload["status"] == "PASS_WITH_WARNINGS"
     assert reprocess_payload["transactions_imported"] == 2
     assert reprocess_payload["duplicate_transactions_detected"] == 0
     assert reprocess_payload["message"] == (

@@ -13,6 +13,7 @@ from app.db import source_files as source_files_repo
 from app.db import validation_reports as validation_reports_repo
 from app.db.database import database_connection, initialize_database
 from app.models.imports import BankName, ImportStatus
+from app.models.ledger import TransactionDirection, TransactionSummaryGroupBy
 from app.models.parsing import RawRowType
 from tests.factories import (
     canonical_transaction,
@@ -52,6 +53,7 @@ def test_source_file_repository_round_trips_and_updates_records() -> None:
         import_status=ImportStatus.PASS,
         statement_start_date=None,
         statement_end_date=None,
+        account_id="generated-account-id",
         parser_version="v2",
     )
 
@@ -63,6 +65,7 @@ def test_source_file_repository_round_trips_and_updates_records() -> None:
     assert updated.import_status == ImportStatus.PASS_WITH_WARNINGS
     assert updated.parser_version == "v1"
     assert reparsed.import_status == ImportStatus.PASS
+    assert reparsed.account_id == "generated-account-id"
     assert reparsed.parser_version == "v2"
     assert source_files_repo.get_source_file_by_hash("2" * 64) is None
     with pytest.raises(LookupError):
@@ -110,6 +113,7 @@ def test_raw_row_repository_round_trips_summarizes_and_deletes_rows() -> None:
             file_id, connection=connection
         ).raw_rows_recorded == (0)
         assert raw_rows_repo.get_raw_rows_by_file_id(file_id, connection=connection) == []
+        raw_rows_repo.delete_raw_rows_by_file_id(file_id, connection=connection)
 
     class EmptyRawSummaryConnection:
         def execute(self, *_args):
@@ -145,6 +149,7 @@ def test_canonical_transaction_repository_round_trips_and_deletes_rows() -> None
         account_id="secondary",
         transaction_date=datetime(2026, 4, 2).date(),
         amount=Decimal("125.00"),
+        direction=TransactionDirection.CREDIT,
         fingerprint="5" * 64,
         created_at=datetime(2026, 4, 2),
     )
@@ -165,6 +170,14 @@ def test_canonical_transaction_repository_round_trips_and_deletes_rows() -> None
         "250.00"
     )
     assert len(canonical_repo.list_canonical_transactions(limit=10, offset=0)) == 2
+    assert (
+        canonical_repo.list_canonical_transactions(
+            direction=TransactionDirection.CREDIT,
+            limit=10,
+            offset=0,
+        )[0].transaction_fingerprint
+        == "5" * 64
+    )
     assert (
         canonical_repo.list_canonical_transactions(
             bank_name="hdfc",
@@ -202,6 +215,18 @@ def test_canonical_transaction_repository_round_trips_and_deletes_rows() -> None
             )[0].transaction_fingerprint
             == "3" * 64
         )
+        summary_rows = canonical_repo.summarize_canonical_transactions(
+            group_by=TransactionSummaryGroupBy.MONTH,
+            direction=TransactionDirection.DEBIT,
+            limit=10,
+            offset=0,
+            connection=connection,
+        )
+        canonical_repo.delete_canonical_transactions_by_file_id(file_id, connection=connection)
+    assert summary_rows[0].transaction_count == 1
+    assert summary_rows[0].debit_total == Decimal("250.00")
+    assert summary_rows[0].credit_total == Decimal("0.00")
+    assert summary_rows[0].net_amount == Decimal("-250.00")
 
     canonical_repo.delete_canonical_transactions_by_file_id(file_id)
 
@@ -216,6 +241,8 @@ def test_canonical_transaction_repository_round_trips_and_deletes_rows() -> None
             return None
 
     assert canonical_repo._fetch_canonical_transaction_count(EmptyCountConnection(), uuid4()) == 0
+    with pytest.raises(ValueError):
+        canonical_repo._date_bucket_expression("year")  # type: ignore[arg-type]
 
 
 def test_validation_report_repository_round_trips_latest_report(

@@ -131,6 +131,7 @@ def update_source_file_processing_result(
     import_status: ImportStatus,
     statement_start_date: date | None,
     statement_end_date: date | None,
+    account_id: str | None = None,
     parser_version: str | None = None,
     connection: duckdb.DuckDBPyConnection | None = None,
 ) -> SourceFileRecord:
@@ -144,6 +145,7 @@ def update_source_file_processing_result(
                 import_status=import_status,
                 statement_start_date=statement_start_date,
                 statement_end_date=statement_end_date,
+                account_id=account_id,
                 parser_version=parser_version,
             )
 
@@ -153,6 +155,7 @@ def update_source_file_processing_result(
         import_status=import_status,
         statement_start_date=statement_start_date,
         statement_end_date=statement_end_date,
+        account_id=account_id,
         parser_version=parser_version,
     )
 
@@ -208,6 +211,7 @@ def _update_source_file_processing_result(
     import_status: ImportStatus,
     statement_start_date: date | None,
     statement_end_date: date | None,
+    account_id: str | None,
     parser_version: str | None,
 ) -> SourceFileRecord:
     connection.execute(
@@ -215,6 +219,7 @@ def _update_source_file_processing_result(
         UPDATE source_files
         SET
             parser_version = COALESCE(?, parser_version),
+            account_id = COALESCE(?, account_id),
             import_status = ?,
             statement_start_date = ?,
             statement_end_date = ?
@@ -222,6 +227,7 @@ def _update_source_file_processing_result(
         """,
         [
             parser_version,
+            account_id,
             import_status.value,
             statement_start_date,
             statement_end_date,

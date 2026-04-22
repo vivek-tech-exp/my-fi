@@ -116,12 +116,13 @@ Available now:
 * `GET /imports/{file_id}/rows`
 * `POST /imports/{file_id}/reprocess`
 * `GET /transactions`
+* `GET /transactions/summary`
 
 The upload endpoint accepts:
 
 * multipart `file`
 * `bank_name`
-* optional `account_id`
+* optional `account_id` (auto-generated from bank + statement period when omitted)
 
 Current supported bank names:
 
@@ -173,6 +174,7 @@ Every completed import now gets a validation report:
 
 * row counts are reconciled against parser output
 * suspicious rows and duplicate rows are surfaced as warnings
+* running balance continuity mismatches are surfaced as warnings when balance columns exist
 * invalid headers, unreadable files, and empty canonical imports fail review
 * final import status is explicitly set to `PASS`, `PASS_WITH_WARNINGS`, or `FAIL_NEEDS_REVIEW`
 
@@ -183,7 +185,8 @@ Use the inspection APIs from Swagger UI to review imports without querying DuckD
 * `GET /imports/{file_id}/report` returns the validation report
 * `GET /imports/{file_id}/rows` returns the raw-row audit trail
 * `POST /imports/{file_id}/reprocess` re-runs the parser and validation flow from the stored source file
-* `GET /transactions` returns canonical ledger rows with optional filters
+* `GET /transactions` returns canonical ledger rows with optional filters (bank, account, direction, source file, date range)
+* `GET /transactions/summary?group_by=month` returns monthly canonical ledger aggregates
 
 The registry currently tracks:
 

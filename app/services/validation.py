@@ -1,8 +1,10 @@
 """Validation and reconciliation checks for completed imports."""
 
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from app.models.imports import ImportStatus
+from app.models.ledger import CanonicalTransactionRecord, TransactionDirection
 from app.models.parsing import ParserInspectionResult
 from app.models.validation import ValidationCheckStatus, ValidationReportRecord
 
@@ -68,6 +70,13 @@ def build_validation_report(
 
     if _has_transaction_outside_statement_period(inspection_result):
         warning_messages.append("One or more transactions fall outside the statement date range.")
+
+    balance_mismatch_count = _running_balance_mismatch_count(inspection_result)
+    if balance_mismatch_count > 0:
+        warning_messages.append(
+            "Running balance continuity mismatches were detected across "
+            f"{balance_mismatch_count} transitions."
+        )
 
     if supports_canonical_mapping and inspection_result.transactions_imported > 0:
         informational_messages.append(
@@ -161,3 +170,64 @@ def _has_transaction_outside_statement_period(
         or transaction.transaction_date > inspection_result.statement_end_date
         for transaction in inspection_result.canonical_transactions
     )
+
+
+def _running_balance_mismatch_count(inspection_result: ParserInspectionResult) -> int:
+    balance_rows = [
+        transaction
+        for transaction in sorted(
+            inspection_result.canonical_transactions,
+            key=lambda transaction: transaction.source_row_number,
+        )
+        if transaction.balance is not None
+    ]
+    if len(balance_rows) < 2:
+        return 0
+
+    forward_mismatches = _running_balance_mismatch_count_forward(balance_rows)
+    reverse_mismatches = _running_balance_mismatch_count_reverse(balance_rows)
+    return min(forward_mismatches, reverse_mismatches)
+
+
+def _running_balance_mismatch_count_forward(
+    transactions: list[CanonicalTransactionRecord],
+) -> int:
+    mismatches = 0
+    for previous, current in zip(transactions, transactions[1:], strict=False):
+        if previous.balance is None:
+            continue
+
+        expected_balance = previous.balance + _signed_amount(current)
+        if _is_balance_mismatch(current.balance, expected_balance):
+            mismatches += 1
+
+    return mismatches
+
+
+def _running_balance_mismatch_count_reverse(
+    transactions: list[CanonicalTransactionRecord],
+) -> int:
+    mismatches = 0
+    for previous, current in zip(transactions, transactions[1:], strict=False):
+        if previous.balance is None:
+            continue
+
+        expected_balance = previous.balance - _signed_amount(previous)
+        if _is_balance_mismatch(current.balance, expected_balance):
+            mismatches += 1
+
+    return mismatches
+
+
+def _signed_amount(transaction: CanonicalTransactionRecord) -> Decimal:
+    if transaction.direction == TransactionDirection.CREDIT:
+        return transaction.amount
+
+    return -transaction.amount
+
+
+def _is_balance_mismatch(actual_balance: Decimal | None, expected_balance: Decimal) -> bool:
+    if actual_balance is None:
+        return False
+
+    return abs(actual_balance - expected_balance) > Decimal("0.01")

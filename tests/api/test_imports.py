@@ -19,7 +19,7 @@ def test_upload_csv_persists_file_and_returns_metadata(
 
     response = client.post(
         "/imports/csv",
-        data={"bank_name": "hdfc", "account_id": "primary-checking"},
+        data={"bank_name": "hdfc"},
         files={"file": ("salary_statement.csv", file_bytes, "text/csv")},
     )
 
@@ -28,7 +28,7 @@ def test_upload_csv_persists_file_and_returns_metadata(
     stored_path = Path(payload["stored_path"])
 
     assert payload["bank_name"] == "hdfc"
-    assert payload["account_id"] == "primary-checking"
+    assert payload["account_id"] == "hdfc:2026-04-01:2026-04-01"
     assert payload["original_filename"] == "salary_statement.csv"
     assert payload["file_hash"] == sha256(file_bytes).hexdigest()
     assert payload["duplicate_file"] is False
@@ -80,7 +80,7 @@ def test_upload_csv_persists_file_and_returns_metadata(
 
     assert row is not None
     assert row[0] == "hdfc"
-    assert row[1] == "primary-checking"
+    assert row[1] == "hdfc:2026-04-01:2026-04-01"
     assert row[2] == "salary_statement.csv"
     assert row[3] == payload["stored_path"]
     assert row[4] == payload["file_hash"]
@@ -153,7 +153,7 @@ def test_upload_csv_persists_file_and_returns_metadata(
     assert canonical_rows == [
         (
             "hdfc",
-            "primary-checking",
+            "hdfc:2026-04-01:2026-04-01",
             "Salary",
             Decimal("1000.00"),
             "CREDIT",
@@ -203,12 +203,12 @@ def test_upload_csv_returns_existing_record_for_duplicate_file(
 
     first_response = client.post(
         "/imports/csv",
-        data={"bank_name": "hdfc", "account_id": "primary-checking"},
+        data={"bank_name": "hdfc"},
         files={"file": ("salary_statement.csv", file_bytes, "text/csv")},
     )
     second_response = client.post(
         "/imports/csv",
-        data={"bank_name": "hdfc", "account_id": "secondary-account"},
+        data={"bank_name": "hdfc"},
         files={"file": ("renamed_statement.csv", file_bytes, "text/csv")},
     )
 
@@ -222,7 +222,7 @@ def test_upload_csv_returns_existing_record_for_duplicate_file(
     assert second_payload["file_id"] == first_payload["file_id"]
     assert second_payload["file_hash"] == first_payload["file_hash"]
     assert second_payload["stored_path"] == first_payload["stored_path"]
-    assert second_payload["account_id"] == "primary-checking"
+    assert second_payload["account_id"] == "hdfc:2026-04-01:2026-04-01"
     assert second_payload["parser_name"] == "hdfc_csv_parser"
     assert second_payload["encoding_detected"] == "utf-8"
     assert second_payload["delimiter_detected"] == ","
@@ -293,7 +293,7 @@ def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
 
     response = client.post(
         "/imports/csv",
-        data={"bank_name": "kotak", "account_id": "travel-fund"},
+        data={"bank_name": "kotak"},
         files={"file": ("kotak_statement.csv", file_bytes, "text/csv")},
     )
 
@@ -370,7 +370,7 @@ def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
     assert canonical_rows == [
         (
             "kotak",
-            "travel-fund",
+            "kotak:2026-01-01:2026-04-15",
             date(2026, 4, 3),
             date(2026, 4, 3),
             "UPI/CAFE BREWSOME P/627219443204/resolve interna",
@@ -384,7 +384,7 @@ def test_upload_csv_imports_kotak_transactions_into_canonical_ledger(
         ),
         (
             "kotak",
-            "travel-fund",
+            "kotak:2026-01-01:2026-04-15",
             date(2026, 4, 2),
             date(2026, 4, 2),
             "UPI/MANKONDA VIVEK/120977030678/UPI",
@@ -438,6 +438,61 @@ def test_upload_csv_auto_generates_account_id_from_statement_period(
     assert canonical_account_ids == [("kotak:2026-01-01:2026-04-15",)]
 
 
+def test_upload_csv_batch_processes_multiple_files_with_per_file_results(
+    client: TestClient,
+) -> None:
+    first_file = b"Date,Narration,Debit,Credit,Balance\n2026-04-01,Salary,,1000.00,1000.00\n"
+    second_file = b"Date,Narration,Debit,Credit,Balance\n2026-04-02,Cafe,50.00,,950.00\n"
+
+    response = client.post(
+        "/imports/csv/batch",
+        data={"bank_name": "hdfc"},
+        files=[
+            ("files", ("salary_statement.csv", first_file, "text/csv")),
+            ("files", ("cafe_statement.csv", second_file, "text/csv")),
+            ("files", ("empty.csv", b"", "text/csv")),
+        ],
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["total_files"] == 3
+    assert payload["succeeded"] == 2
+    assert payload["failed"] == 1
+    assert payload["duplicates"] == 0
+    assert [item["status_code"] for item in payload["results"]] == [201, 201, 400]
+    assert payload["results"][0]["result"]["account_id"] == "hdfc:2026-04-01:2026-04-01"
+    assert payload["results"][1]["result"]["account_id"] == "hdfc:2026-04-02:2026-04-02"
+    assert payload["results"][2]["error"] == "Uploaded file is empty."
+
+
+def test_upload_csv_writes_row_diagnostics_to_import_log(
+    client: TestClient,
+    settings: Settings,
+) -> None:
+    file_bytes = (
+        b"Date,Narration,Debit,Credit,Balance\n2026-04-01,Broken amount,not-money,,950.00\n"
+    )
+
+    response = client.post(
+        "/imports/csv",
+        data={"bank_name": "hdfc"},
+        files={"file": ("broken_statement.csv", file_bytes, "text/csv")},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "FAIL_NEEDS_REVIEW"
+    assert payload["suspicious_rows_recorded"] == 1
+
+    log_text = (settings.logs_dir / settings.import_log_file).read_text(encoding="utf-8")
+    assert "raw_row_diagnostic" in log_text
+    assert "Broken amount" in log_text
+    assert "not-money" in log_text
+    assert "invalid_amount_shape" in log_text
+
+
 def test_import_inspection_endpoints_return_reports_and_rows(
     client: TestClient,
     settings: Settings,
@@ -458,7 +513,7 @@ def test_import_inspection_endpoints_return_reports_and_rows(
 
     upload_response = client.post(
         "/imports/csv",
-        data={"bank_name": "kotak", "account_id": "travel-fund"},
+        data={"bank_name": "kotak"},
         files={"file": ("kotak_statement.csv", file_bytes, "text/csv")},
     )
 
@@ -540,7 +595,7 @@ def test_upload_csv_skips_exact_duplicate_transactions_from_overlapping_kotak_fi
     )
     overlapping_file_bytes = (
         b'"",,Account Statement\n'
-        b'"Jharkhand ",,,,Period,From 01/01/2026 To 16/04/2026\n'
+        b'"Jharkhand ",,,,Period,From 01/01/2026 To 15/04/2026\n'
         b"Sl. No.,Transaction Date,Value Date,Description,"
         b"Chq / Ref No.,Debit,Credit,Balance,Dr / Cr\n"
         b"1,03-04-2026 19:40:46,03-04-2026,"
@@ -554,12 +609,12 @@ def test_upload_csv_skips_exact_duplicate_transactions_from_overlapping_kotak_fi
 
     first_response = client.post(
         "/imports/csv",
-        data={"bank_name": "kotak", "account_id": "travel-fund"},
+        data={"bank_name": "kotak"},
         files={"file": ("kotak_statement_1.csv", first_file_bytes, "text/csv")},
     )
     second_response = client.post(
         "/imports/csv",
-        data={"bank_name": "kotak", "account_id": "travel-fund"},
+        data={"bank_name": "kotak"},
         files={"file": ("kotak_statement_2.csv", overlapping_file_bytes, "text/csv")},
     )
 
@@ -582,7 +637,7 @@ def test_upload_csv_skips_exact_duplicate_transactions_from_overlapping_kotak_fi
     with duckdb.connect(str(settings.database_path), read_only=True) as connection:
         canonical_count = connection.execute(
             "SELECT COUNT(*) FROM canonical_transactions WHERE account_id = ?",
-            ["travel-fund"],
+            ["kotak:2026-01-01:2026-04-15"],
         ).fetchone()
         second_file_transactions = connection.execute(
             """

@@ -131,6 +131,25 @@ class UploadCsvResponse(BaseModel):
         )
 
 
+class UploadCsvBatchItemResponse(BaseModel):
+    """Per-file result for a batch CSV upload."""
+
+    original_filename: str
+    status_code: int
+    result: UploadCsvResponse | None = None
+    error: str | None = None
+
+
+class UploadCsvBatchResponse(BaseModel):
+    """Structured response for a multi-file CSV upload."""
+
+    total_files: int = Field(ge=0)
+    succeeded: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    duplicates: int = Field(ge=0)
+    results: list[UploadCsvBatchItemResponse] = Field(default_factory=list)
+
+
 class ImportSummaryResponse(BaseModel):
     """Summary metadata for an import."""
 

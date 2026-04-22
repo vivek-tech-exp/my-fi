@@ -132,22 +132,49 @@ def test_canonical_transaction_repository_round_trips_and_deletes_rows() -> None
     file_id = uuid4()
     transaction = canonical_transaction(
         source_file_id=file_id,
+        bank_name="hdfc",
+        account_id="primary",
+        transaction_date=datetime(2026, 4, 1).date(),
         amount=Decimal("250.00"),
         fingerprint="3" * 64,
         created_at=datetime(2026, 4, 1),
     )
+    second_transaction = canonical_transaction(
+        source_file_id=uuid4(),
+        bank_name="federal",
+        account_id="secondary",
+        transaction_date=datetime(2026, 4, 2).date(),
+        amount=Decimal("125.00"),
+        fingerprint="5" * 64,
+        created_at=datetime(2026, 4, 2),
+    )
     duplicate_candidate = canonical_transaction(
         source_file_id=uuid4(),
+        bank_name="hdfc",
+        account_id="primary",
+        transaction_date=datetime(2026, 4, 1).date(),
         amount=Decimal("250.00"),
         fingerprint="4" * 64,
     )
 
     canonical_repo.insert_canonical_transactions([])
-    canonical_repo.insert_canonical_transactions([transaction])
+    canonical_repo.insert_canonical_transactions([transaction, second_transaction])
 
     assert canonical_repo.get_canonical_transaction_count(file_id) == 1
     assert canonical_repo.get_canonical_transactions_by_file_id(file_id)[0].amount == Decimal(
         "250.00"
+    )
+    assert len(canonical_repo.list_canonical_transactions(limit=10, offset=0)) == 2
+    assert (
+        canonical_repo.list_canonical_transactions(
+            bank_name="hdfc",
+            account_id="primary",
+            transaction_date_from=datetime(2026, 4, 1).date(),
+            transaction_date_to=datetime(2026, 4, 1).date(),
+            limit=10,
+            offset=0,
+        )[0].transaction_fingerprint
+        == "3" * 64
     )
     assert (
         canonical_repo.get_canonical_transaction_by_fingerprint("3" * 64).transaction_fingerprint
@@ -166,6 +193,15 @@ def test_canonical_transaction_repository_round_trips_and_deletes_rows() -> None
             == "3" * 64
         )
         assert canonical_repo.get_canonical_transaction_count(file_id, connection=connection) == 1
+        assert (
+            canonical_repo.list_canonical_transactions(
+                source_file_id=file_id,
+                limit=10,
+                offset=0,
+                connection=connection,
+            )[0].transaction_fingerprint
+            == "3" * 64
+        )
 
     canonical_repo.delete_canonical_transactions_by_file_id(file_id)
 

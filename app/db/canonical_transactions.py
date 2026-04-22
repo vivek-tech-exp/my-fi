@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import cast
 from uuid import UUID
@@ -189,6 +189,44 @@ def get_potential_duplicate_candidates(
     return _fetch_potential_duplicate_candidates(connection, record)
 
 
+def list_canonical_transactions(
+    *,
+    bank_name: str | None = None,
+    account_id: str | None = None,
+    source_file_id: UUID | None = None,
+    transaction_date_from: date | None = None,
+    transaction_date_to: date | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> list[CanonicalTransactionRecord]:
+    """List canonical transactions with optional filters and pagination."""
+
+    if connection is None:
+        with database_connection() as new_connection:
+            return _list_canonical_transactions(
+                new_connection,
+                bank_name=bank_name,
+                account_id=account_id,
+                source_file_id=source_file_id,
+                transaction_date_from=transaction_date_from,
+                transaction_date_to=transaction_date_to,
+                limit=limit,
+                offset=offset,
+            )
+
+    return _list_canonical_transactions(
+        connection,
+        bank_name=bank_name,
+        account_id=account_id,
+        source_file_id=source_file_id,
+        transaction_date_from=transaction_date_from,
+        transaction_date_to=transaction_date_to,
+        limit=limit,
+        offset=offset,
+    )
+
+
 def _insert_canonical_transactions(
     connection: duckdb.DuckDBPyConnection,
     records: Sequence[CanonicalTransactionRecord],
@@ -289,6 +327,67 @@ def _fetch_potential_duplicate_candidates(
             record.transaction_fingerprint,
         ],
     ).fetchall()
+    return [_row_to_canonical_transaction_record(row) for row in rows]
+
+
+def _list_canonical_transactions(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    bank_name: str | None,
+    account_id: str | None,
+    source_file_id: UUID | None,
+    transaction_date_from: date | None,
+    transaction_date_to: date | None,
+    limit: int,
+    offset: int,
+) -> list[CanonicalTransactionRecord]:
+    query = """
+    SELECT
+        transaction_id,
+        source_file_id,
+        raw_row_id,
+        bank_name,
+        account_id,
+        transaction_date,
+        value_date,
+        description_raw,
+        amount,
+        direction,
+        balance,
+        currency,
+        source_row_number,
+        reference_number,
+        transaction_fingerprint,
+        duplicate_confidence,
+        created_at
+    FROM canonical_transactions
+    """
+    filters: list[str] = []
+    parameters: list[object] = []
+    if bank_name is not None:
+        filters.append("bank_name = ?")
+        parameters.append(bank_name)
+    if account_id is not None:
+        filters.append("COALESCE(account_id, '') = ?")
+        parameters.append(account_id)
+    if source_file_id is not None:
+        filters.append("source_file_id = ?")
+        parameters.append(str(source_file_id))
+    if transaction_date_from is not None:
+        filters.append("transaction_date >= ?")
+        parameters.append(transaction_date_from)
+    if transaction_date_to is not None:
+        filters.append("transaction_date <= ?")
+        parameters.append(transaction_date_to)
+    if filters:
+        query += " WHERE " + " AND ".join(filters)
+
+    query += """
+    ORDER BY transaction_date DESC, created_at DESC, transaction_id DESC
+    LIMIT ? OFFSET ?
+    """
+    parameters.extend([limit, offset])
+    rows = connection.execute(query, parameters).fetchall()
     return [_row_to_canonical_transaction_record(row) for row in rows]
 
 

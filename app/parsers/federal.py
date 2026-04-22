@@ -18,9 +18,6 @@ class FederalCsvParser(BaseCsvParser):
     parser_name = "federal_csv_parser"
     supports_canonical_mapping = True
 
-    def reset_state(self) -> None:
-        self._header_columns: list[str] = []
-
     def is_header_row(self, columns: list[str]) -> bool:
         tokens = self.normalized_header_tokens(columns)
         has_date = any(
@@ -33,11 +30,7 @@ class FederalCsvParser(BaseCsvParser):
             or {"withdrawal", "deposit"} <= tokens
             or {"debit", "credit"} <= tokens
         )
-        header_detected = has_date and has_description and has_balance and has_amounts
-        if header_detected:
-            self._header_columns = columns
-
-        return header_detected
+        return has_date and has_description and has_balance and has_amounts
 
     def classify_row(
         self,
@@ -58,20 +51,20 @@ class FederalCsvParser(BaseCsvParser):
         if base_classification.row_type != RawRowType.ACCEPTED:
             return base_classification
 
-        if self._transaction_date(columns) is None:
+        if self._transaction_date(columns, header_columns=header_columns) is None:
             return RowClassification(
                 row_type=RawRowType.SUSPICIOUS,
                 rejection_reason="invalid_transaction_date",
             )
 
-        if not self._description(columns):
+        if not self._description(columns, header_columns=header_columns):
             return RowClassification(
                 row_type=RawRowType.SUSPICIOUS,
                 rejection_reason="missing_description",
             )
 
-        debit_amount = self._debit_amount(columns)
-        credit_amount = self._credit_amount(columns)
+        debit_amount = self._debit_amount(columns, header_columns=header_columns)
+        credit_amount = self._credit_amount(columns, header_columns=header_columns)
         if debit_amount is None and credit_amount is None:
             return RowClassification(
                 row_type=RawRowType.SUSPICIOUS,
@@ -125,53 +118,107 @@ class FederalCsvParser(BaseCsvParser):
             reference_number=self._reference_number(row.raw_payload),
         )
 
-    def _transaction_date(self, columns: list[str]) -> date | None:
+    def _transaction_date(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> date | None:
         return self._parse_date(
             self._column_value(
                 columns,
                 {"tran date", "transaction date", "date"},
                 default_index=0,
+                header_columns=header_columns,
             )
         )
 
-    def _value_date(self, columns: list[str]) -> date | None:
-        return self._parse_date(self._column_value(columns, {"value date"}, default_index=None))
+    def _value_date(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> date | None:
+        return self._parse_date(
+            self._column_value(
+                columns,
+                {"value date"},
+                default_index=2 if len(columns) >= 7 else None,
+                header_columns=header_columns,
+            )
+        )
 
-    def _description(self, columns: list[str]) -> str:
+    def _description(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> str:
         return self._column_value(
             columns,
             {"particulars", "narration", "description"},
             default_index=1,
+            header_columns=header_columns,
         ).strip()
 
-    def _reference_number(self, columns: list[str]) -> str | None:
+    def _reference_number(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> str | None:
         reference_number = self._column_value(
             columns,
             {"ref no", "reference number", "cheque number"},
-            default_index=None,
+            default_index=6 if len(columns) >= 7 else None,
+            header_columns=header_columns,
         ).strip()
         return reference_number or None
 
-    def _debit_amount(self, columns: list[str]) -> Decimal | None:
+    def _debit_amount(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> Decimal | None:
         return self._parse_decimal(
             self._column_value(
                 columns,
                 {"withdrawals", "withdrawal", "debit"},
-                default_index=2,
+                default_index=3 if len(columns) >= 7 else 2,
+                header_columns=header_columns,
             )
         )
 
-    def _credit_amount(self, columns: list[str]) -> Decimal | None:
+    def _credit_amount(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> Decimal | None:
         return self._parse_decimal(
             self._column_value(
                 columns,
                 {"deposits", "deposit", "credit"},
-                default_index=3,
+                default_index=4 if len(columns) >= 7 else 3,
+                header_columns=header_columns,
             )
         )
 
-    def _balance(self, columns: list[str]) -> Decimal | None:
-        return self._parse_decimal(self._column_value(columns, {"balance"}, default_index=4))
+    def _balance(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> Decimal | None:
+        return self._parse_decimal(
+            self._column_value(
+                columns,
+                {"balance"},
+                default_index=5 if len(columns) >= 7 else 4,
+                header_columns=header_columns,
+            )
+        )
 
     def _column_value(
         self,
@@ -179,8 +226,9 @@ class FederalCsvParser(BaseCsvParser):
         accepted_tokens: set[str],
         *,
         default_index: int | None,
+        header_columns: list[str] | None = None,
     ) -> str:
-        for index, header in enumerate(self._header_columns):
+        for index, header in enumerate(header_columns or []):
             if index < len(columns) and normalized_header_token(header) in accepted_tokens:
                 return columns[index]
 

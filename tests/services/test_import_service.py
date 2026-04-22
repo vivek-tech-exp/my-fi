@@ -262,6 +262,7 @@ def test_account_id_enforcement_infers_statement_period_and_updates_transactions
     )
     generated_account_id = import_service._resolve_effective_account_id(
         bank_name=BankName.HDFC,
+        detected_account_id=None,
         statement_start_date=statement_start_date,
         statement_end_date=statement_end_date,
     )
@@ -281,6 +282,15 @@ def test_account_id_enforcement_infers_statement_period_and_updates_transactions
         transaction.transaction_fingerprint
         for transaction in inspection_result.canonical_transactions
     }
+    assert (
+        import_service._resolve_effective_account_id(
+            bank_name=BankName.KOTAK,
+            detected_account_id="  4345054483  ",
+            statement_start_date=statement_start_date,
+            statement_end_date=statement_end_date,
+        )
+        == "kotak:4345054483"
+    )
     assert (
         import_service._build_generated_account_id(
             bank_name=BankName.FEDERAL,

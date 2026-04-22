@@ -438,6 +438,57 @@ def test_upload_csv_auto_generates_account_id_from_statement_period(
     assert canonical_account_ids == [("kotak:2026-01-01:2026-04-15",)]
 
 
+def test_upload_csv_uses_detected_kotak_account_number_for_single_amount_exports(
+    client: TestClient,
+    settings: Settings,
+) -> None:
+    file_bytes = (
+        b'"",,Account Statement\n'
+        b'"Evening Club, East Singhbhum, ",,,,Account No.,4345054483\n'
+        b'"Jharkhand ",,,,Period,From 01/04/2026 To 16/04/2026\n'
+        b"Sl. No.,Transaction Date,Value Date,Description,"
+        b"Chq / Ref No.,Amount,Dr / Cr,Balance,Dr / Cr\n"
+        b"1,01-04-2026 13:49:08,01-04-2026,"
+        b"UPI/THE HOMELY FOOO/416554447283/resolve interna,"
+        b'UPI-609106767783,318.75,DR,"4,510.79",CR\n'
+    )
+
+    response = client.post(
+        "/imports/csv",
+        data={"bank_name": "kotak"},
+        files={"file": ("kotak_single_amount_statement.csv", file_bytes, "text/csv")},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "PASS"
+    assert payload["account_id"] == "kotak:4345054483"
+    assert payload["header_detected"] is True
+    assert payload["transactions_imported"] == 1
+
+    with duckdb.connect(str(settings.database_path), read_only=True) as connection:
+        source_file_account = connection.execute(
+            "SELECT account_id FROM source_files WHERE file_id = ?",
+            [payload["file_id"]],
+        ).fetchone()
+        canonical_row = connection.execute(
+            """
+            SELECT account_id, amount, direction, balance
+            FROM canonical_transactions
+            WHERE source_file_id = ?
+            """,
+            [payload["file_id"]],
+        ).fetchone()
+
+    assert source_file_account == ("kotak:4345054483",)
+    assert canonical_row == (
+        "kotak:4345054483",
+        Decimal("318.75"),
+        "DEBIT",
+        Decimal("4510.79"),
+    )
+
+
 def test_upload_csv_batch_processes_multiple_files_with_per_file_results(
     client: TestClient,
 ) -> None:

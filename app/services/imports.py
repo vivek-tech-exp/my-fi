@@ -269,6 +269,7 @@ def _process_source_file_record(
     inspection_result.statement_end_date = statement_end_date
     effective_account_id = _resolve_effective_account_id(
         bank_name=source_file.bank_name,
+        detected_account_id=inspection_result.detected_account_id,
         statement_start_date=statement_start_date,
         statement_end_date=statement_end_date,
     )
@@ -368,9 +369,15 @@ def _resolve_statement_period(
 def _resolve_effective_account_id(
     *,
     bank_name: BankName,
+    detected_account_id: str | None,
     statement_start_date: date | None,
     statement_end_date: date | None,
 ) -> str:
+    if detected_account_id:
+        normalized_account_id = detected_account_id.strip()
+        if normalized_account_id:
+            return f"{bank_name.value}:{normalized_account_id}"
+
     return _build_generated_account_id(
         bank_name=bank_name,
         statement_start_date=statement_start_date,
@@ -452,6 +459,7 @@ def _log_import_diagnostics(
         original_filename=source_file.original_filename,
         file_hash=source_file.file_hash,
         status=source_file.import_status.value,
+        detected_account_id=inspection_result.detected_account_id,
         statement_start_date=source_file.statement_start_date,
         statement_end_date=source_file.statement_end_date,
         parser_name=inspection_result.parser_name,

@@ -50,6 +50,7 @@ class ParserInspectionResult(RawRowAuditSummary):
     parser_name: str = Field(min_length=1)
     parser_version: str = Field(min_length=1)
     header_row_number: int | None = Field(default=None, ge=1)
+    detected_account_id: str | None = None
     statement_start_date: date | None = None
     statement_end_date: date | None = None
     duplicate_transactions_detected: int = Field(default=0, ge=0)

@@ -1,5 +1,6 @@
 """Validation and reconciliation checks for completed imports."""
 
+from datetime import date
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -166,10 +167,14 @@ def _has_transaction_outside_statement_period(
         return False
 
     return any(
-        transaction.transaction_date < inspection_result.statement_start_date
-        or transaction.transaction_date > inspection_result.statement_end_date
+        _effective_period_date(transaction) < inspection_result.statement_start_date
+        or _effective_period_date(transaction) > inspection_result.statement_end_date
         for transaction in inspection_result.canonical_transactions
     )
+
+
+def _effective_period_date(transaction: CanonicalTransactionRecord) -> date:
+    return transaction.value_date or transaction.transaction_date
 
 
 def _running_balance_mismatch_count(inspection_result: ParserInspectionResult) -> int:
@@ -184,39 +189,116 @@ def _running_balance_mismatch_count(inspection_result: ParserInspectionResult) -
     if len(balance_rows) < 2:
         return 0
 
-    forward_mismatches = _running_balance_mismatch_count_forward(balance_rows)
-    reverse_mismatches = _running_balance_mismatch_count_reverse(balance_rows)
+    source_order = _infer_source_date_order(balance_rows)
+    if source_order == "ascending":
+        return _running_balance_mismatch_count_forward(
+            balance_rows,
+            skip_date_discontinuities=True,
+        )
+
+    if source_order == "descending":
+        return _running_balance_mismatch_count_reverse(
+            balance_rows,
+            skip_date_discontinuities=True,
+        )
+
+    forward_mismatches = _running_balance_mismatch_count_forward(
+        balance_rows,
+        skip_date_discontinuities=True,
+    )
+    reverse_mismatches = _running_balance_mismatch_count_reverse(
+        balance_rows,
+        skip_date_discontinuities=True,
+    )
     return min(forward_mismatches, reverse_mismatches)
 
 
 def _running_balance_mismatch_count_forward(
     transactions: list[CanonicalTransactionRecord],
+    *,
+    skip_date_discontinuities: bool = False,
 ) -> int:
     mismatches = 0
-    for previous, current in zip(transactions, transactions[1:], strict=False):
-        if previous.balance is None:
+    previous: CanonicalTransactionRecord | None = None
+    for current in transactions:
+        if previous is None:
+            previous = current
             continue
 
-        expected_balance = previous.balance + _signed_amount(current)
+        previous_balance = previous.balance
+        if previous_balance is None:
+            previous = current
+            continue
+
+        if skip_date_discontinuities and current.transaction_date == previous.transaction_date:
+            previous = None
+            continue
+
+        if skip_date_discontinuities and current.transaction_date < previous.transaction_date:
+            previous = current
+            continue
+
+        expected_balance = previous_balance + _signed_amount(current)
         if _is_balance_mismatch(current.balance, expected_balance):
             mismatches += 1
+
+        previous = current
 
     return mismatches
 
 
 def _running_balance_mismatch_count_reverse(
     transactions: list[CanonicalTransactionRecord],
+    *,
+    skip_date_discontinuities: bool = False,
 ) -> int:
     mismatches = 0
-    for previous, current in zip(transactions, transactions[1:], strict=False):
-        if previous.balance is None:
+    previous: CanonicalTransactionRecord | None = None
+    for current in transactions:
+        if previous is None:
+            previous = current
             continue
 
-        expected_balance = previous.balance - _signed_amount(previous)
+        previous_balance = previous.balance
+        if previous_balance is None:
+            previous = current
+            continue
+
+        if skip_date_discontinuities and current.transaction_date == previous.transaction_date:
+            previous = None
+            continue
+
+        if skip_date_discontinuities and current.transaction_date > previous.transaction_date:
+            previous = current
+            continue
+
+        expected_balance = previous_balance - _signed_amount(previous)
         if _is_balance_mismatch(current.balance, expected_balance):
             mismatches += 1
 
+        previous = current
+
     return mismatches
+
+
+def _infer_source_date_order(
+    transactions: list[CanonicalTransactionRecord],
+) -> str | None:
+    ascending_pairs = 0
+    descending_pairs = 0
+    for previous, current in zip(transactions, transactions[1:], strict=False):
+        if current.transaction_date > previous.transaction_date:
+            ascending_pairs += 1
+        elif current.transaction_date < previous.transaction_date:
+            descending_pairs += 1
+
+    if ascending_pairs > descending_pairs:
+        return "ascending"
+
+    if descending_pairs > ascending_pairs:
+        return "descending"
+
+    return None
 
 
 def _signed_amount(transaction: CanonicalTransactionRecord) -> Decimal:

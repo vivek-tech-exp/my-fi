@@ -1,12 +1,19 @@
 """HDFC parser implementation for canonical transaction mapping."""
 
+from csv import writer
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from io import StringIO
 
 from app.models.imports import BankName
 from app.models.ledger import CanonicalTransactionRecord, TransactionDirection
 from app.models.parsing import ParserInspectionResult, RawRowRecord, RawRowType
-from app.parsers.base import BaseCsvParser, RowClassification, normalized_header_token
+from app.parsers.base import (
+    BaseCsvParser,
+    RowClassification,
+    RowRepairOutcome,
+    normalized_header_token,
+)
 
 HDFC_DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d/%m/%y")
 
@@ -18,9 +25,6 @@ class HdfcCsvParser(BaseCsvParser):
     parser_name = "hdfc_csv_parser"
     supports_canonical_mapping = True
 
-    def reset_state(self) -> None:
-        self._header_columns: list[str] = []
-
     def is_header_row(self, columns: list[str]) -> bool:
         tokens = self.normalized_header_tokens(columns)
         has_date = any(token in tokens for token in {"date", "transaction date"})
@@ -31,11 +35,30 @@ class HdfcCsvParser(BaseCsvParser):
             or {"withdrawal amt", "deposit amt"} <= tokens
             or {"withdrawal", "deposit"} <= tokens
         )
-        header_detected = has_date and has_description and has_balance and has_amounts
-        if header_detected:
-            self._header_columns = columns
+        return has_date and has_description and has_balance and has_amounts
 
-        return header_detected
+    def repair_row(
+        self,
+        *,
+        row_number: int,
+        raw_text: str,
+        columns: list[str],
+        header_columns: list[str] | None,
+    ) -> RowRepairOutcome:
+        repaired_columns = self._repair_split_narration_columns(columns, header_columns)
+        if repaired_columns is None:
+            return super().repair_row(
+                row_number=row_number,
+                raw_text=raw_text,
+                columns=columns,
+                header_columns=header_columns,
+            )
+
+        return RowRepairOutcome(
+            row_text=self._to_csv_line(repaired_columns),
+            columns=repaired_columns,
+            repaired=True,
+        )
 
     def classify_row(
         self,
@@ -56,20 +79,20 @@ class HdfcCsvParser(BaseCsvParser):
         if base_classification.row_type != RawRowType.ACCEPTED:
             return base_classification
 
-        if self._transaction_date(columns) is None:
+        if self._transaction_date(columns, header_columns=header_columns) is None:
             return RowClassification(
                 row_type=RawRowType.SUSPICIOUS,
                 rejection_reason="invalid_transaction_date",
             )
 
-        if not self._description(columns):
+        if not self._description(columns, header_columns=header_columns):
             return RowClassification(
                 row_type=RawRowType.SUSPICIOUS,
                 rejection_reason="missing_description",
             )
 
-        debit_amount = self._debit_amount(columns)
-        credit_amount = self._credit_amount(columns)
+        debit_amount = self._debit_amount(columns, header_columns=header_columns)
+        credit_amount = self._credit_amount(columns, header_columns=header_columns)
         if debit_amount is None and credit_amount is None:
             return RowClassification(
                 row_type=RawRowType.SUSPICIOUS,
@@ -123,55 +146,105 @@ class HdfcCsvParser(BaseCsvParser):
             reference_number=self._reference_number(row.raw_payload),
         )
 
-    def _transaction_date(self, columns: list[str]) -> date | None:
+    def _transaction_date(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> date | None:
         return self._parse_date(
-            self._column_value(columns, {"date", "transaction date"}, default_index=0)
+            self._column_value(
+                columns,
+                {"date", "transaction date"},
+                default_index=0,
+                header_columns=header_columns,
+            )
         )
 
-    def _value_date(self, columns: list[str]) -> date | None:
+    def _value_date(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> date | None:
         return self._parse_date(
-            self._column_value(columns, {"value date", "value dt"}, default_index=None)
+            self._column_value(
+                columns,
+                {"value date", "value dt"},
+                default_index=3 if len(columns) >= 7 else None,
+                header_columns=header_columns,
+            )
         )
 
-    def _description(self, columns: list[str]) -> str:
+    def _description(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> str:
         return self._column_value(
             columns,
             {"narration", "description"},
             default_index=1,
+            header_columns=header_columns,
         ).strip()
 
-    def _reference_number(self, columns: list[str]) -> str | None:
+    def _reference_number(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> str | None:
         reference_number = self._column_value(
             columns,
             {"chq ref no", "cheque ref no", "ref no", "reference number"},
             default_index=2 if len(columns) >= 7 else None,
+            header_columns=header_columns,
         ).strip()
         return reference_number or None
 
-    def _debit_amount(self, columns: list[str]) -> Decimal | None:
+    def _debit_amount(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> Decimal | None:
         return self._parse_decimal(
             self._column_value(
                 columns,
                 {"debit", "withdrawal", "withdrawal amt"},
                 default_index=4 if len(columns) >= 7 else 2,
+                header_columns=header_columns,
             )
         )
 
-    def _credit_amount(self, columns: list[str]) -> Decimal | None:
+    def _credit_amount(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> Decimal | None:
         return self._parse_decimal(
             self._column_value(
                 columns,
                 {"credit", "deposit", "deposit amt"},
                 default_index=5 if len(columns) >= 7 else 3,
+                header_columns=header_columns,
             )
         )
 
-    def _balance(self, columns: list[str]) -> Decimal | None:
+    def _balance(
+        self,
+        columns: list[str],
+        *,
+        header_columns: list[str] | None = None,
+    ) -> Decimal | None:
         return self._parse_decimal(
             self._column_value(
                 columns,
                 {"balance", "closing balance"},
                 default_index=6 if len(columns) >= 7 else 4,
+                header_columns=header_columns,
             )
         )
 
@@ -181,8 +254,9 @@ class HdfcCsvParser(BaseCsvParser):
         accepted_tokens: set[str],
         *,
         default_index: int | None,
+        header_columns: list[str] | None = None,
     ) -> str:
-        for index, header in enumerate(self._header_columns):
+        for index, header in enumerate(header_columns or []):
             if index < len(columns) and normalized_header_token(header) in accepted_tokens:
                 return columns[index]
 
@@ -190,6 +264,54 @@ class HdfcCsvParser(BaseCsvParser):
             return columns[default_index]
 
         return ""
+
+    def _repair_split_narration_columns(
+        self,
+        columns: list[str],
+        header_columns: list[str] | None,
+    ) -> list[str] | None:
+        if header_columns is None:
+            return None
+
+        expected_count = len(header_columns)
+        if len(columns) <= expected_count:
+            return None
+
+        extra_columns = len(columns) - expected_count
+        if extra_columns not in {1, 2}:
+            return None
+
+        narration_index = self._narration_column_index(header_columns)
+        if narration_index is None:
+            return None
+
+        merge_stop = narration_index + extra_columns + 1
+        merged_narration = ",".join(part.strip() for part in columns[narration_index:merge_stop])
+        repaired_columns = columns[:narration_index] + [merged_narration] + columns[merge_stop:]
+
+        debit_amount = self._debit_amount(repaired_columns, header_columns=header_columns)
+        credit_amount = self._credit_amount(repaired_columns, header_columns=header_columns)
+        if debit_amount is None and credit_amount is None:
+            return None
+
+        if debit_amount is not None and credit_amount is not None:
+            return None
+
+        return repaired_columns
+
+    def _narration_column_index(self, header_columns: list[str]) -> int | None:
+        for index, header in enumerate(header_columns):
+            token = normalized_header_token(header)
+            if token in {"narration", "description"}:
+                return index
+
+        return None
+
+    def _to_csv_line(self, columns: list[str]) -> str:
+        buffer = StringIO()
+        csv_writer = writer(buffer)
+        csv_writer.writerow(columns)
+        return buffer.getvalue().rstrip("\r\n")
 
     def _parse_date(self, raw_value: str) -> date | None:
         stripped_value = raw_value.strip()

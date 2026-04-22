@@ -183,6 +183,7 @@ def test_hdfc_parser_classifies_invalid_rows_and_maps_debits_with_reference_numb
             "2026-04-03,Cafe,REF-4,2026-04-03,,,879.50\n"
             "2026-04-04,Cafe,REF-5,2026-04-04,10.00,20.00,879.50\n"
             "2026-04-05,Cafe,REF-6,not-a-date,10.00,,bad-decimal\n"
+            "2026-04-06,POS PURCHASE,COFFEE SHOP,REF-7,2026-04-06,15.00,,864.50\n"
         ),
         delimiter=",",
         account_id="primary",
@@ -196,6 +197,8 @@ def test_hdfc_parser_classifies_invalid_rows_and_maps_debits_with_reference_numb
     assert accepted_transactions[0].reference_number == "REF-1"
     assert accepted_transactions[1].value_date is None
     assert accepted_transactions[1].balance is None
+    assert accepted_transactions[2].description_raw == "POS PURCHASE,COFFEE SHOP"
+    assert inspection_result.raw_rows[-1].repaired_row is True
 
     raw_row = RawRowRecord(
         raw_row_id=uuid4(),
@@ -304,6 +307,116 @@ def test_federal_parser_classifies_invalid_rows_and_maps_debits() -> None:
         is None
     )
     assert parser._column_value(["fallback"], {"missing"}, default_index=0) == "fallback"
+    assert not hasattr(parser, "_header_columns")
+
+
+def test_hdfc_parser_repairs_split_narration_when_amount_shape_is_valid() -> None:
+    parser = get_bank_parser(bank_name=BankName.HDFC, parser_version="v1")
+    inspection_result = parser.inspect_text(
+        file_id=uuid4(),
+        normalized_text=(
+            "Date,Narration,Reference Number,Value Date,Debit,Credit,Balance\n"
+            "2026-04-01,POS PURCHASE,COFFEE SHOP,REF-1,2026-04-01,120.50,,879.50\n"
+            "2026-04-02,POS PURCHASE,COFFEE SHOP,REF-2,2026-04-02,,,879.50\n"
+        ),
+        delimiter=",",
+        account_id="primary",
+    )
+
+    assert inspection_result.accepted_rows_recorded == 1
+    assert inspection_result.suspicious_rows_recorded == 1
+    assert inspection_result.canonical_transactions[0].description_raw == "POS PURCHASE,COFFEE SHOP"
+    assert inspection_result.raw_rows[1].repaired_row is True
+    assert inspection_result.raw_rows[2].rejection_reason == "column_count_mismatch"
+    assert not hasattr(parser, "_header_columns")
+
+
+def test_hdfc_split_narration_repair_rejects_invalid_candidates() -> None:
+    parser = get_bank_parser(bank_name=BankName.HDFC, parser_version="v1")
+    header_columns = [
+        "Date",
+        "Narration",
+        "Reference Number",
+        "Value Date",
+        "Debit",
+        "Credit",
+        "Balance",
+    ]
+
+    assert (
+        parser._repair_split_narration_columns(
+            [
+                "2026-04-01",
+                "POS",
+                "CAFE",
+                "SHOP",
+                "REF-1",
+                "2026-04-01",
+                "120.50",
+                "",
+                "879.50",
+                "noise",
+            ],
+            header_columns,
+        )
+        is None
+    )
+    assert (
+        parser._repair_split_narration_columns(
+            [
+                "2026-04-01",
+                "POS",
+                "CAFE",
+                "REF-1",
+                "2026-04-01",
+                "",
+                "",
+                "879.50",
+            ],
+            header_columns,
+        )
+        is None
+    )
+    assert (
+        parser._repair_split_narration_columns(
+            [
+                "2026-04-01",
+                "POS",
+                "CAFE",
+                "REF-1",
+                "2026-04-01",
+                "10.00",
+                "20.00",
+                "879.50",
+            ],
+            header_columns,
+        )
+        is None
+    )
+    assert (
+        parser._repair_split_narration_columns(
+            [
+                "2026-04-01",
+                "POS",
+                "CAFE",
+                "REF-1",
+                "2026-04-01",
+                "120.50",
+                "",
+                "879.50",
+            ],
+            [
+                "Date",
+                "Reference Number",
+                "Value Date",
+                "Debit",
+                "Credit",
+                "Balance",
+            ],
+        )
+        is None
+    )
+    assert parser._narration_column_index(["Date", "Reference Number"]) is None
 
 
 def test_kotak_parser_classifies_metadata_footer_and_malformed_rows() -> None:

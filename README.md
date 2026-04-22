@@ -115,6 +115,7 @@ Available now:
 * `GET /imports/{file_id}/report`
 * `GET /imports/{file_id}/rows`
 * `POST /imports/{file_id}/reprocess`
+* `GET /transactions`
 
 The upload endpoint accepts:
 
@@ -182,6 +183,7 @@ Use the inspection APIs from Swagger UI to review imports without querying DuckD
 * `GET /imports/{file_id}/report` returns the validation report
 * `GET /imports/{file_id}/rows` returns the raw-row audit trail
 * `POST /imports/{file_id}/reprocess` re-runs the parser and validation flow from the stored source file
+* `GET /transactions` returns canonical ledger rows with optional filters
 
 The registry currently tracks:
 

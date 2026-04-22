@@ -24,6 +24,12 @@ class DuplicateConfidence(StrEnum):
     AMBIGUOUS = "AMBIGUOUS"
 
 
+class TransactionSummaryGroupBy(StrEnum):
+    """Supported aggregation dimensions for transaction summaries."""
+
+    MONTH = "month"
+
+
 class CanonicalTransactionRecord(BaseModel):
     """Trusted canonical transaction derived from an accepted raw row."""
 
@@ -44,3 +50,14 @@ class CanonicalTransactionRecord(BaseModel):
     transaction_fingerprint: str = Field(min_length=64, max_length=64)
     duplicate_confidence: DuplicateConfidence = DuplicateConfidence.UNIQUE
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class TransactionSummaryRecord(BaseModel):
+    """Aggregated transaction metrics for a grouped ledger period."""
+
+    period_start: date
+    group_by: TransactionSummaryGroupBy
+    transaction_count: int = Field(ge=0)
+    debit_total: Decimal
+    credit_total: Decimal
+    net_amount: Decimal

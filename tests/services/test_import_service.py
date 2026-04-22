@@ -15,7 +15,7 @@ from app.models.parsing import ParserInspectionResult
 from app.models.validation import ValidationCheckStatus
 from app.parsers.base import BaseCsvParser
 from app.services import imports as import_service
-from tests.factories import source_file_record, validation_report
+from tests.factories import canonical_transaction, source_file_record, validation_report
 
 
 class AuditOnlyParser(BaseCsvParser):
@@ -240,3 +240,60 @@ def test_import_message_builder_covers_warning_and_scaffolding_paths() -> None:
         validation_report=clean_report,
     )
     assert clean_report.reconciliation_status == ValidationCheckStatus.PASS
+
+
+def test_account_id_enforcement_infers_statement_period_and_updates_transactions() -> None:
+    first_transaction = canonical_transaction(
+        account_id=None,
+        transaction_date=date(2026, 4, 1),
+        source_row_number=1,
+    )
+    second_transaction = canonical_transaction(
+        account_id=None,
+        transaction_date=date(2026, 4, 3),
+        source_row_number=2,
+        fingerprint="f" * 64,
+    )
+    inspection_result = ParserInspectionResult(
+        parser_name="test",
+        parser_version="v1",
+        canonical_transactions=[first_transaction, second_transaction],
+    )
+
+    statement_start_date, statement_end_date = import_service._resolve_statement_period(
+        inspection_result
+    )
+    generated_account_id = import_service._resolve_effective_account_id(
+        bank_name=BankName.HDFC,
+        requested_account_id=None,
+        statement_start_date=statement_start_date,
+        statement_end_date=statement_end_date,
+    )
+    updated_transactions = import_service._apply_account_id_to_transactions(
+        inspection_result.canonical_transactions,
+        account_id=generated_account_id,
+    )
+
+    assert statement_start_date == date(2026, 4, 1)
+    assert statement_end_date == date(2026, 4, 3)
+    assert generated_account_id == "hdfc:2026-04-01:2026-04-03"
+    assert {transaction.account_id for transaction in updated_transactions} == {
+        "hdfc:2026-04-01:2026-04-03"
+    }
+    assert (
+        import_service._resolve_effective_account_id(
+            bank_name=BankName.HDFC,
+            requested_account_id="  explicit-id  ",
+            statement_start_date=statement_start_date,
+            statement_end_date=statement_end_date,
+        )
+        == "explicit-id"
+    )
+    assert (
+        import_service._build_generated_account_id(
+            bank_name=BankName.FEDERAL,
+            statement_start_date=None,
+            statement_end_date=None,
+        )
+        == "federal:unknown-start:unknown-end"
+    )

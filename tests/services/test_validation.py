@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from app.models.parsing import ParserInspectionResult
 from app.models.validation import ValidationCheckStatus
+from app.services import validation as validation_service
 from app.services.validation import build_validation_report
 from tests.factories import canonical_transaction
 
@@ -130,3 +131,89 @@ def test_validation_passes_non_canonical_audit_only_import() -> None:
 
     assert report.final_status == "PASS"
     assert report.ledger_continuity_status == ValidationCheckStatus.SKIPPED
+
+
+def test_validation_warns_on_running_balance_mismatch() -> None:
+    first_transaction = canonical_transaction(
+        source_row_number=1,
+        amount=Decimal("10.00"),
+        balance=Decimal("100.00"),
+    )
+    second_transaction = canonical_transaction(
+        source_row_number=2,
+        amount=Decimal("10.00"),
+        balance=Decimal("95.00"),
+        fingerprint="b" * 64,
+    )
+
+    report = build_validation_report(
+        file_id=uuid4(),
+        inspection_result=_inspection_result(
+            canonical_transactions=[first_transaction, second_transaction],
+        ),
+        supports_canonical_mapping=True,
+        quarantine_required=False,
+    )
+
+    assert report.final_status == "PASS_WITH_WARNINGS"
+    assert any("Running balance continuity mismatches" in message for message in report.messages)
+
+
+def test_validation_passes_when_running_balances_are_continuous() -> None:
+    first_transaction = canonical_transaction(
+        source_row_number=1,
+        amount=Decimal("10.00"),
+        balance=Decimal("100.00"),
+    )
+    second_transaction = canonical_transaction(
+        source_row_number=2,
+        amount=Decimal("10.00"),
+        balance=Decimal("90.00"),
+        fingerprint="c" * 64,
+    )
+
+    report = build_validation_report(
+        file_id=uuid4(),
+        inspection_result=_inspection_result(
+            canonical_transactions=[first_transaction, second_transaction],
+        ),
+        supports_canonical_mapping=True,
+        quarantine_required=False,
+    )
+
+    assert report.final_status == "PASS"
+    assert all(
+        "Running balance continuity mismatches" not in message for message in report.messages
+    )
+
+
+def test_balance_reconciliation_helpers_skip_missing_balances() -> None:
+    first_transaction = canonical_transaction(
+        source_row_number=1,
+        balance=None,
+    )
+    second_transaction = canonical_transaction(
+        source_row_number=2,
+        balance=Decimal("90.00"),
+        fingerprint="d" * 64,
+    )
+
+    assert (
+        validation_service._running_balance_mismatch_count_forward(  # noqa: SLF001
+            [first_transaction, second_transaction]
+        )
+        == 0
+    )
+    assert (
+        validation_service._running_balance_mismatch_count_reverse(  # noqa: SLF001
+            [first_transaction, second_transaction]
+        )
+        == 0
+    )
+    assert (
+        validation_service._is_balance_mismatch(  # noqa: SLF001
+            None,
+            Decimal("100.00"),
+        )
+        is False
+    )

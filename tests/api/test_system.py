@@ -35,3 +35,25 @@ def test_docs_endpoint_is_available(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert "swagger-ui" in response.text.lower()
+
+
+def test_openapi_renders_upload_fields_as_swagger_file_inputs(client: TestClient) -> None:
+    response = client.get("/openapi.json")
+    cached_response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    assert cached_response.status_code == 200
+    schemas = response.json()["components"]["schemas"]
+    single_upload_schema = schemas["Body_upload_csv_imports_csv_post"]["properties"]["file"]
+    batch_upload_schema = schemas["Body_upload_csv_batch_imports_csv_batch_post"]["properties"][
+        "files"
+    ]
+
+    assert single_upload_schema == {
+        "type": "string",
+        "format": "binary",
+        "title": "File",
+        "description": "CSV file to ingest",
+    }
+    assert batch_upload_schema["items"] == {"type": "string", "format": "binary"}
+    assert batch_upload_schema["type"] == "array"

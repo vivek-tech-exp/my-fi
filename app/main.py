@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.openapi import install_openapi_schema
 from app.core.runtime import ensure_directories
 from app.db.database import initialize_database
 
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     application.include_router(api_router)
+    install_openapi_schema(application)
     return application
 
 

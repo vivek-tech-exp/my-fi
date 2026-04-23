@@ -86,8 +86,6 @@ export async function listTransactions(filters) {
 export async function getTransactionSummary(filters) {
   const params = new URLSearchParams({ group_by: "month" });
   appendLedgerFilters(params, filters);
-  appendOptionalParam(params, "limit", filters.limit || 100);
-  appendOptionalParam(params, "offset", filters.offset || 0);
 
   return requestJson(`/transactions/summary?${params.toString()}`);
 }

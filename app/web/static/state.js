@@ -3,6 +3,14 @@ export const state = {
   selectedBank: "kotak",
   selectedImportId: null,
   rowFilter: "issues",
+  busy: {
+    upload: false,
+    imports: false,
+    importDetail: false,
+    reprocess: false,
+    transactions: false,
+    summary: false,
+  },
   importFilters: {
     bankName: "",
     status: "",
@@ -37,6 +45,7 @@ export const state = {
     duplicateConfidence: "",
     hasBalance: "",
     sourceFileId: "",
+    sourceImportQuery: "",
     dateFrom: "",
     dateTo: "",
     limit: 50,
@@ -59,5 +68,12 @@ export function setTransactionFilters(updates) {
   state.transactionFilters = {
     ...state.transactionFilters,
     ...updates,
+  };
+}
+
+export function setBusy(key, value) {
+  state.busy = {
+    ...state.busy,
+    [key]: value,
   };
 }

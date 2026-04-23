@@ -11,6 +11,8 @@ def test_static_html_references_expected_assets() -> None:
     assert '<link rel="icon" href="data:," />' in html
     assert '<link rel="stylesheet" href="/ui/assets/styles.css" />' in html
     assert '<script type="module" src="/ui/assets/main.js"></script>' in html
+    assert 'id="rail-toggle"' in html
+    assert 'id="primary-nav"' in html
 
 
 def test_api_client_centralizes_backend_endpoint_paths() -> None:

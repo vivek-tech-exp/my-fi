@@ -54,6 +54,21 @@ const emptyTransactionFilters = {
 const viewRoot = document.querySelector("#view-root");
 const viewTitle = document.querySelector("#view-title");
 const globalStatus = document.querySelector("#global-status");
+const rail = document.querySelector(".rail");
+const railToggle = document.querySelector("#rail-toggle");
+
+function closeRail() {
+  rail?.classList.remove("is-open");
+  railToggle?.setAttribute("aria-expanded", "false");
+}
+
+function toggleRail() {
+  if (!rail || !railToggle) {
+    return;
+  }
+  const isOpen = rail.classList.toggle("is-open");
+  railToggle.setAttribute("aria-expanded", String(isOpen));
+}
 
 function setStatus(message, isError = false) {
   globalStatus.textContent = message || "";
@@ -125,10 +140,23 @@ function bindNavigation() {
   document.querySelectorAll(".nav-button").forEach((button) => {
     button.addEventListener("click", async () => {
       const nextView = button.dataset.view;
+      closeRail();
       setState({ activeView: nextView });
       render();
       await loadViewData(nextView);
     });
+  });
+}
+
+function bindRailToggle() {
+  railToggle?.addEventListener("click", () => {
+    toggleRail();
+  });
+
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > 820) {
+      closeRail();
+    }
   });
 }
 
@@ -504,5 +532,6 @@ function monthEnd(periodStart) {
 }
 
 bindNavigation();
+bindRailToggle();
 render();
 loadViewData(state.activeView);

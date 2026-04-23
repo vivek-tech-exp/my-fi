@@ -1,3 +1,9 @@
+# macOS
+.DS_Store
+
+# Agent config
+.gemini/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

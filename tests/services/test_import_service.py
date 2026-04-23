@@ -53,7 +53,6 @@ def test_store_uploaded_csv_deletes_stored_file_when_insert_fails(
             file_bytes=b"Date,Narration\n2026-04-01,Cafe\n",
             original_filename="../bad name.csv",
             bank_name=BankName.HDFC,
-            account_id=None,
         )
 
     assert list(settings.uploads_dir.rglob("*bad_name.csv")) == []
@@ -93,7 +92,6 @@ def test_store_uploaded_csv_handles_concurrent_duplicate_registration(
         file_bytes=b"Date,Narration\n2026-04-01,Cafe\n",
         original_filename="race.csv",
         bank_name=BankName.KOTAK,
-        account_id=None,
     )
 
     assert response.duplicate_file is True
@@ -149,7 +147,6 @@ def test_process_source_file_keeps_audit_only_status_without_canonical_mapping()
             source_file=source_file,
             parser=parser,
             normalization_result=normalization_result,
-            account_id=None,
             connection=connection,
         )
         connection.execute("COMMIT")
@@ -265,13 +262,14 @@ def test_account_id_enforcement_infers_statement_period_and_updates_transactions
     )
     generated_account_id = import_service._resolve_effective_account_id(
         bank_name=BankName.HDFC,
-        requested_account_id=None,
+        detected_account_id=None,
         statement_start_date=statement_start_date,
         statement_end_date=statement_end_date,
     )
     updated_transactions = import_service._apply_account_id_to_transactions(
         inspection_result.canonical_transactions,
         account_id=generated_account_id,
+        parser=import_service.get_bank_parser(bank_name=BankName.HDFC, parser_version="v1"),
     )
 
     assert statement_start_date == date(2026, 4, 1)
@@ -280,14 +278,18 @@ def test_account_id_enforcement_infers_statement_period_and_updates_transactions
     assert {transaction.account_id for transaction in updated_transactions} == {
         "hdfc:2026-04-01:2026-04-03"
     }
+    assert {transaction.transaction_fingerprint for transaction in updated_transactions} != {
+        transaction.transaction_fingerprint
+        for transaction in inspection_result.canonical_transactions
+    }
     assert (
         import_service._resolve_effective_account_id(
-            bank_name=BankName.HDFC,
-            requested_account_id="  explicit-id  ",
+            bank_name=BankName.KOTAK,
+            detected_account_id="  4345054483  ",
             statement_start_date=statement_start_date,
             statement_end_date=statement_end_date,
         )
-        == "explicit-id"
+        == "kotak:4345054483"
     )
     assert (
         import_service._build_generated_account_id(

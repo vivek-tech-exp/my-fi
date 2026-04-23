@@ -7,7 +7,7 @@ from re import Match, search
 from app.models.imports import BankName
 from app.models.ledger import CanonicalTransactionRecord, TransactionDirection
 from app.models.parsing import ParserInspectionResult, RawRowRecord, RawRowType
-from app.parsers.base import BaseCsvParser, RowClassification
+from app.parsers.base import BaseCsvParser, RowClassification, normalized_header_token
 
 KOTAK_TRANSACTION_DATE_FORMAT = "%d-%m-%Y %H:%M:%S"
 KOTAK_VALUE_DATE_FORMAT = "%d-%m-%Y"
@@ -23,13 +23,17 @@ class KotakCsvParser(BaseCsvParser):
     def reset_state(self) -> None:
         self._statement_start_date: date | None = None
         self._statement_end_date: date | None = None
+        self._detected_account_id: str | None = None
 
     def is_header_row(self, columns: list[str]) -> bool:
         tokens = self.normalized_header_tokens(columns)
+        token_list = [token for column in columns if (token := normalized_header_token(column))]
         has_date = any(token in tokens for token in {"date", "transaction date", "value date"})
         has_description = any(token in tokens for token in {"narration", "description"})
         has_balance = "balance" in tokens
-        has_amounts = {"debit", "credit"} <= tokens
+        has_amounts = {"debit", "credit"} <= tokens or (
+            "amount" in tokens and token_list.count("dr cr") >= 2
+        )
         return has_date and has_description and has_balance and has_amounts
 
     def classify_row(
@@ -83,6 +87,7 @@ class KotakCsvParser(BaseCsvParser):
         return RowClassification(row_type=RawRowType.ACCEPTED)
 
     def finalize_result(self, inspection_result: ParserInspectionResult) -> None:
+        inspection_result.detected_account_id = self._detected_account_id
         inspection_result.statement_start_date = self._statement_start_date
         inspection_result.statement_end_date = self._statement_end_date
 
@@ -105,17 +110,9 @@ class KotakCsvParser(BaseCsvParser):
         ).date()
         description_raw = row.raw_payload[3].strip()
         reference_number = row.raw_payload[4].strip() or None
-        debit_amount = self._parse_decimal(row.raw_payload[5])
-        credit_amount = self._parse_decimal(row.raw_payload[6])
+        amount, direction = self._parse_transaction_amount_and_direction(row.raw_payload)
         balance = self._parse_balance(row.raw_payload[7], row.raw_payload[8])
-
-        if debit_amount is not None:
-            amount = debit_amount
-            direction = TransactionDirection.DEBIT
-        elif credit_amount is not None:
-            amount = credit_amount
-            direction = TransactionDirection.CREDIT
-        else:
+        if amount is None or direction is None:
             return None
 
         return self.build_canonical_transaction(
@@ -139,10 +136,19 @@ class KotakCsvParser(BaseCsvParser):
         if self._extract_statement_period(raw_text) is not None:
             return "statement_metadata"
 
+        self._extract_account_id(columns)
         if any(column.strip() for column in columns):
             return "account_metadata"
 
         return None
+
+    def _extract_account_id(self, columns: list[str]) -> None:
+        for index, column in enumerate(columns[:-1]):
+            if self.normalized_header_tokens([column]) == {"account no"}:
+                account_id = columns[index + 1].strip()
+                if account_id:
+                    self._detected_account_id = account_id
+                return
 
     def _extract_statement_period(self, raw_text: str) -> Match[str] | None:
         match = search(
@@ -167,12 +173,38 @@ class KotakCsvParser(BaseCsvParser):
         return stripped_text.startswith("Write to us at Customer Contact Centre")
 
     def _has_valid_amount_shape(self, columns: list[str]) -> bool:
+        if self._uses_single_amount_layout(columns):
+            amount, direction = self._parse_transaction_amount_and_direction(columns)
+            return amount is not None and direction is not None
+
         debit_amount = self._parse_decimal(columns[5])
         credit_amount = self._parse_decimal(columns[6])
         if debit_amount is None and credit_amount is None:
             return False
 
         return debit_amount is None or credit_amount is None
+
+    def _uses_single_amount_layout(self, columns: list[str]) -> bool:
+        return columns[6].strip().upper() in {"DR", "CR"}
+
+    def _parse_transaction_amount_and_direction(
+        self,
+        columns: list[str],
+    ) -> tuple[Decimal | None, TransactionDirection | None]:
+        if self._uses_single_amount_layout(columns):
+            amount = self._parse_decimal(columns[5])
+            side = columns[6].strip().upper()
+            if side == "DR":
+                return amount, TransactionDirection.DEBIT
+            return amount, TransactionDirection.CREDIT
+
+        debit_amount = self._parse_decimal(columns[5])
+        credit_amount = self._parse_decimal(columns[6])
+        if debit_amount is not None:
+            return debit_amount, TransactionDirection.DEBIT
+        if credit_amount is not None:
+            return credit_amount, TransactionDirection.CREDIT
+        return None, None
 
     def _has_valid_date_shape(self, columns: list[str]) -> bool:
         try:

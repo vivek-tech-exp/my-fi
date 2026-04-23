@@ -73,18 +73,18 @@ def test_duplicate_protection_marks_in_batch_balance_match_as_exact_duplicate() 
     assert result.probable_duplicate_transactions == 0
 
 
-def test_duplicate_protection_marks_ambiguous_existing_candidate() -> None:
+def test_duplicate_protection_marks_no_balance_existing_candidate_as_ambiguous() -> None:
     settings = get_settings()
     ensure_directories(settings.required_directories)
     initialize_database()
     existing_transaction = _transaction(
         amount=Decimal("100.00"),
-        balance=Decimal("900.00"),
+        balance=None,
         fingerprint="c" * 64,
     )
     ambiguous_transaction = _transaction(
         amount=Decimal("100.00"),
-        balance=Decimal("800.00"),
+        balance=None,
         fingerprint="d" * 64,
     )
 
@@ -98,6 +98,34 @@ def test_duplicate_protection_marks_ambiguous_existing_candidate() -> None:
 
     assert result.transactions_to_insert[0].duplicate_confidence == "AMBIGUOUS"
     assert result.ambiguous_transactions_detected == 1
+    assert result.duplicate_transactions_detected == 0
+
+
+def test_duplicate_protection_treats_balance_mismatch_as_unique() -> None:
+    settings = get_settings()
+    ensure_directories(settings.required_directories)
+    initialize_database()
+    existing_transaction = _transaction(
+        amount=Decimal("100.00"),
+        balance=Decimal("900.00"),
+        fingerprint="c" * 64,
+    )
+    unique_transaction = _transaction(
+        amount=Decimal("100.00"),
+        balance=Decimal("800.00"),
+        fingerprint="d" * 64,
+    )
+
+    insert_canonical_transactions([existing_transaction])
+
+    with database_connection() as connection:
+        result = apply_duplicate_protection(
+            [unique_transaction],
+            connection=connection,
+        )
+
+    assert result.transactions_to_insert == [unique_transaction]
+    assert result.ambiguous_transactions_detected == 0
     assert result.duplicate_transactions_detected == 0
 
 

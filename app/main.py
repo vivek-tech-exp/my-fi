@@ -4,9 +4,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
+from app.api.routes.ui import WEB_STATIC_DIR
 from app.core.config import get_settings
+from app.core.logging import configure_logging
+from app.core.openapi import install_openapi_schema
 from app.core.runtime import ensure_directories
 from app.db.database import initialize_database
 
@@ -15,6 +19,7 @@ from app.db.database import initialize_database
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     ensure_directories(settings.required_directories)
+    configure_logging(settings)
     initialize_database()
     yield
 
@@ -28,6 +33,12 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     application.include_router(api_router)
+    application.mount(
+        "/ui/assets",
+        StaticFiles(directory=WEB_STATIC_DIR),
+        name="ui-assets",
+    )
+    install_openapi_schema(application)
     return application
 
 

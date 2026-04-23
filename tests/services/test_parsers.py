@@ -102,6 +102,47 @@ def test_kotak_parser_extracts_statement_dates_and_canonical_transactions() -> N
     assert transaction.source_row_number == 4
 
 
+def test_kotak_parser_accepts_single_amount_direction_export_shape() -> None:
+    parser = get_bank_parser(bank_name=BankName.KOTAK, parser_version="v1")
+    inspection_result = parser.inspect_text(
+        file_id=uuid4(),
+        normalized_text=(
+            '"",,Account Statement\n'
+            '"Evening Club, East Singhbhum, ",,,,Account No.,4345054483\n'
+            '"Jharkhand ",,,,Period,From 01/04/2026 To 16/04/2026\n'
+            "Sl. No.,Transaction Date,Value Date,Description,"
+            "Chq / Ref No.,Amount,Dr / Cr,Balance,Dr / Cr\n"
+            "1,01-04-2026 13:49:08,01-04-2026,"
+            "UPI/THE HOMELY FOOO/416554447283/resolve interna,"
+            'UPI-609106767783,318.75,DR,"4,510.79",CR\n'
+            "2,02-04-2026 19:56:53,02-04-2026,"
+            "UPI/MANKONDA VIVEK/120977030678/UPI,"
+            'UPI-609218418071,"50,000.00",CR,"53,053.91",CR\n'
+        ),
+        delimiter=",",
+        account_id=None,
+    )
+
+    assert inspection_result.header_detected is True
+    assert inspection_result.detected_account_id == "4345054483"
+    assert inspection_result.statement_start_date is not None
+    assert inspection_result.statement_start_date.isoformat() == "2026-04-01"
+    assert inspection_result.statement_end_date is not None
+    assert inspection_result.statement_end_date.isoformat() == "2026-04-16"
+    assert inspection_result.raw_rows_recorded == 6
+    assert inspection_result.accepted_rows_recorded == 2
+    assert inspection_result.ignored_rows_recorded == 4
+    assert inspection_result.suspicious_rows_recorded == 0
+
+    debit_transaction, credit_transaction = inspection_result.canonical_transactions
+    assert debit_transaction.amount == Decimal("318.75")
+    assert debit_transaction.direction == "DEBIT"
+    assert debit_transaction.balance == Decimal("4510.79")
+    assert credit_transaction.amount == Decimal("50000.00")
+    assert credit_transaction.direction == "CREDIT"
+    assert credit_transaction.balance == Decimal("53053.91")
+
+
 def test_federal_parser_uses_bank_specific_header_tokens() -> None:
     parser = get_bank_parser(bank_name=BankName.FEDERAL, parser_version="v1")
     inspection_result = parser.inspect_text(

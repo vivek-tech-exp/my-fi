@@ -16,7 +16,8 @@ This repository is being built in small vertical slices.
 * feature development should happen on short-lived branches
 * changes should merge back to `master` through pull requests
 
-The current completed milestone on `master` is `P11: HDFC and Federal parser support`.
+The current completed milestone on `master` is `P11: HDFC and Federal parser support`,
+plus canonical transaction query APIs and multi-file upload support.
 
 ## Project Overview
 
@@ -99,9 +100,13 @@ uv run uvicorn app.main:app --reload
 
 Then open:
 
+* Local UI: `http://127.0.0.1:8000/ui`
 * Swagger UI: `http://127.0.0.1:8000/docs`
 * OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
 * Health check: `http://127.0.0.1:8000/health`
+
+The local UI is a lightweight static browser client served by FastAPI. It calls the same API
+endpoints used by Swagger UI; it does not query DuckDB directly or embed backend service logic.
 
 ## Current API Surface
 
@@ -109,7 +114,9 @@ Available now:
 
 * `GET /`
 * `GET /health`
+* `GET /ui`
 * `POST /imports/csv`
+* `POST /imports/csv/batch`
 * `GET /imports`
 * `GET /imports/{file_id}`
 * `GET /imports/{file_id}/report`
@@ -118,11 +125,18 @@ Available now:
 * `GET /transactions`
 * `GET /transactions/summary`
 
-The upload endpoint accepts:
+The single-file upload endpoint accepts:
 
 * multipart `file`
 * `bank_name`
-* optional `account_id` (auto-generated from bank + statement period when omitted)
+
+The batch upload endpoint accepts:
+
+* repeated multipart `files`
+* `bank_name`
+
+`account_id` is no longer accepted during upload. The service auto-generates it from the
+bank and detected statement period after parsing.
 
 Current supported bank names:
 
@@ -130,7 +144,17 @@ Current supported bank names:
 * `kotak`
 * `federal`
 
-At this stage, the endpoint stores the uploaded file locally, computes its SHA-256 hash, persists a `source_files` registry row in DuckDB, runs the bank parser, validates the import, and returns structured metadata.
+At this stage, upload endpoints stream incoming files into an ignored staging directory,
+compute each SHA-256 hash from the streamed bytes, enforce a per-file size limit, store the
+original file locally, persist a `source_files` registry row in DuckDB, run the bank parser,
+validate the import, and return structured metadata.
+
+Default upload safety settings:
+
+* staging directory: `storage/upload-staging`
+* diagnostic log file: `storage/logs/imports.log`
+* upload chunk size: `MY_FI_UPLOAD_CHUNK_SIZE_BYTES`, default `1048576`
+* max file size: `MY_FI_MAX_UPLOAD_FILE_SIZE_BYTES`, default `262144000`
 
 Re-uploading the same file content is idempotent:
 
@@ -187,6 +211,24 @@ Use the inspection APIs from Swagger UI to review imports without querying DuckD
 * `POST /imports/{file_id}/reprocess` re-runs the parser and validation flow from the stored source file
 * `GET /transactions` returns canonical ledger rows with optional filters (bank, account, direction, source file, date range)
 * `GET /transactions/summary?group_by=month` returns monthly canonical ledger aggregates
+
+Use `GET /ui` for the lightweight local console:
+
+* upload multiple CSV files by bank
+* review per-file upload results and import statuses
+* inspect import reports and raw-row audit trails
+* filter canonical transactions by bank, account, direction, and date range
+* review monthly transaction summaries
+* reprocess a stored import and refresh the visible data
+
+Use `POST /imports/csv/batch` from Swagger UI when testing several real CSV files. The
+response reports each file independently, so an empty, oversized, duplicate, or malformed
+file does not hide the result for the rest of the batch.
+
+Import diagnostics are written to `storage/logs/imports.log`. Suspicious and repaired rows
+include the row number, rejection reason, raw row text, normalized text when available, and
+parsed payload. These logs are intentionally stored under ignored runtime storage because
+real bank CSV rows can contain sensitive data.
 
 The registry currently tracks:
 

@@ -28,9 +28,14 @@ class Settings(BaseSettings):
     uploads_dir: Path = Field(default=PROJECT_ROOT / "data" / "uploads")
     quarantine_dir: Path = Field(default=PROJECT_ROOT / "data" / "quarantine")
     storage_dir: Path = Field(default=PROJECT_ROOT / "storage")
+    logs_dir: Path = Field(default=PROJECT_ROOT / "storage" / "logs")
+    upload_staging_dir: Path = Field(default=PROJECT_ROOT / "storage" / "upload-staging")
     database_path: Path = Field(default=PROJECT_ROOT / "storage" / "my_fi.duckdb")
     test_fixtures_dir: Path = Field(default=PROJECT_ROOT / "tests" / "fixtures")
     default_parser_version: str = "v1"
+    upload_chunk_size_bytes: int = 1024 * 1024
+    max_upload_file_size_bytes: int = 250 * 1024 * 1024
+    import_log_file: str = "imports.log"
 
     @property
     def required_directories(self) -> tuple[Path, ...]:
@@ -39,6 +44,8 @@ class Settings(BaseSettings):
             self.uploads_dir,
             self.quarantine_dir,
             self.storage_dir,
+            self.logs_dir,
+            self.upload_staging_dir,
             self.test_fixtures_dir,
         )
 

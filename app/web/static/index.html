@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>my-fi local console</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/ui/assets/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="rail" aria-label="Primary navigation">
+        <div class="brand">
+          <span class="brand-mark">mf</span>
+          <span class="brand-name">my-fi</span>
+        </div>
+        <nav class="nav-stack">
+          <button class="nav-button active" type="button" data-view="upload">Upload</button>
+          <button class="nav-button" type="button" data-view="imports">Imports</button>
+          <button class="nav-button" type="button" data-view="transactions">Transactions</button>
+          <button class="nav-button" type="button" data-view="summary">Summary</button>
+        </nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Local banking ingestion</p>
+            <h1 id="view-title">Upload</h1>
+          </div>
+          <div id="global-status" class="global-status" role="status" aria-live="polite"></div>
+        </header>
+
+        <section id="view-root" class="view-root" aria-live="polite"></section>
+      </main>
+    </div>
+
+    <script type="module" src="/ui/assets/main.js"></script>
+  </body>
+</html>

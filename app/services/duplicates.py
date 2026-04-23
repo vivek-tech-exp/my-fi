@@ -122,6 +122,13 @@ def _is_ambiguous_match(
     if transaction.amount != candidate.amount:
         return False
 
+    if (
+        transaction.balance is not None
+        and candidate.balance is not None
+        and transaction.balance != candidate.balance
+    ):
+        return False
+
     if transaction.reference_number and transaction.reference_number == candidate.reference_number:
         return True
 

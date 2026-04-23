@@ -104,7 +104,7 @@ def test_validation_fails_invalid_statement_dates_and_non_positive_amounts() -> 
 
 
 def test_validation_warns_when_transactions_fall_outside_statement_period() -> None:
-    transaction = canonical_transaction(transaction_date=date(2026, 5, 1))
+    transaction = canonical_transaction(transaction_date=date(2026, 5, 1), value_date=None)
     report = build_validation_report(
         file_id=uuid4(),
         inspection_result=_inspection_result(
@@ -119,6 +119,27 @@ def test_validation_warns_when_transactions_fall_outside_statement_period() -> N
     assert report.final_status == "PASS_WITH_WARNINGS"
     assert "One or more transactions fall outside the statement date range." in report.messages
     assert "1 canonical transactions were imported." in report.messages
+
+
+def test_validation_uses_value_date_for_statement_period_check() -> None:
+    transaction = canonical_transaction(
+        transaction_date=date(2026, 5, 1),
+        value_date=date(2026, 4, 30),
+    )
+
+    report = build_validation_report(
+        file_id=uuid4(),
+        inspection_result=_inspection_result(
+            statement_start_date=date(2026, 4, 1),
+            statement_end_date=date(2026, 4, 30),
+            canonical_transactions=[transaction],
+        ),
+        supports_canonical_mapping=True,
+        quarantine_required=False,
+    )
+
+    assert report.final_status == "PASS"
+    assert "One or more transactions fall outside the statement date range." not in report.messages
 
 
 def test_validation_passes_non_canonical_audit_only_import() -> None:
@@ -136,11 +157,13 @@ def test_validation_passes_non_canonical_audit_only_import() -> None:
 def test_validation_warns_on_running_balance_mismatch() -> None:
     first_transaction = canonical_transaction(
         source_row_number=1,
+        transaction_date=date(2026, 4, 2),
         amount=Decimal("10.00"),
         balance=Decimal("100.00"),
     )
     second_transaction = canonical_transaction(
         source_row_number=2,
+        transaction_date=date(2026, 4, 1),
         amount=Decimal("10.00"),
         balance=Decimal("95.00"),
         fingerprint="b" * 64,
@@ -162,13 +185,15 @@ def test_validation_warns_on_running_balance_mismatch() -> None:
 def test_validation_passes_when_running_balances_are_continuous() -> None:
     first_transaction = canonical_transaction(
         source_row_number=1,
+        transaction_date=date(2026, 4, 2),
         amount=Decimal("10.00"),
         balance=Decimal("100.00"),
     )
     second_transaction = canonical_transaction(
         source_row_number=2,
+        transaction_date=date(2026, 4, 1),
         amount=Decimal("10.00"),
-        balance=Decimal("90.00"),
+        balance=Decimal("110.00"),
         fingerprint="c" * 64,
     )
 
@@ -217,3 +242,156 @@ def test_balance_reconciliation_helpers_skip_missing_balances() -> None:
         )
         is False
     )
+
+
+def test_balance_reconciliation_skips_official_kotak_page_discontinuities() -> None:
+    transactions = [
+        canonical_transaction(
+            source_row_number=1,
+            transaction_date=date(2026, 4, 10),
+            amount=Decimal("10.00"),
+            balance=Decimal("100.00"),
+            fingerprint="e" * 64,
+        ),
+        canonical_transaction(
+            source_row_number=2,
+            transaction_date=date(2026, 4, 9),
+            amount=Decimal("10.00"),
+            balance=Decimal("110.00"),
+            fingerprint="f" * 64,
+        ),
+        canonical_transaction(
+            source_row_number=3,
+            transaction_date=date(2026, 4, 15),
+            amount=Decimal("20.00"),
+            balance=Decimal("500.00"),
+            fingerprint="1" * 64,
+        ),
+        canonical_transaction(
+            source_row_number=4,
+            transaction_date=date(2026, 4, 14),
+            amount=Decimal("20.00"),
+            balance=Decimal("520.00"),
+            fingerprint="2" * 64,
+        ),
+    ]
+
+    report = build_validation_report(
+        file_id=uuid4(),
+        inspection_result=_inspection_result(canonical_transactions=transactions),
+        supports_canonical_mapping=True,
+        quarantine_required=False,
+    )
+
+    assert validation_service._infer_source_date_order(transactions) == "descending"  # noqa: SLF001
+    assert report.final_status == "PASS"
+    assert all(
+        "Running balance continuity mismatches" not in message for message in report.messages
+    )
+
+
+def test_balance_reconciliation_skips_same_day_checks_without_transaction_time() -> None:
+    transactions = [
+        canonical_transaction(
+            source_row_number=1,
+            transaction_date=date(2026, 4, 1),
+            amount=Decimal("10.00"),
+            balance=Decimal("100.00"),
+            fingerprint="7" * 64,
+        ),
+        canonical_transaction(
+            source_row_number=2,
+            transaction_date=date(2026, 4, 1),
+            amount=Decimal("10.00"),
+            balance=Decimal("500.00"),
+            fingerprint="8" * 64,
+        ),
+    ]
+
+    report = build_validation_report(
+        file_id=uuid4(),
+        inspection_result=_inspection_result(canonical_transactions=transactions),
+        supports_canonical_mapping=True,
+        quarantine_required=False,
+    )
+
+    assert report.final_status == "PASS"
+    assert all(
+        "Running balance continuity mismatches" not in message for message in report.messages
+    )
+
+
+def test_balance_reconciliation_skips_ascending_page_discontinuities() -> None:
+    transactions = [
+        canonical_transaction(
+            source_row_number=1,
+            transaction_date=date(2026, 4, 1),
+            amount=Decimal("10.00"),
+            balance=Decimal("100.00"),
+            fingerprint="3" * 64,
+        ),
+        canonical_transaction(
+            source_row_number=2,
+            transaction_date=date(2026, 4, 2),
+            amount=Decimal("20.00"),
+            direction=validation_service.TransactionDirection.CREDIT,
+            balance=Decimal("120.00"),
+            fingerprint="4" * 64,
+        ),
+        canonical_transaction(
+            source_row_number=3,
+            transaction_date=date(2026, 4, 3),
+            amount=Decimal("5.00"),
+            balance=Decimal("115.00"),
+            fingerprint="5" * 64,
+        ),
+        canonical_transaction(
+            source_row_number=4,
+            transaction_date=date(2026, 4, 2),
+            amount=Decimal("30.00"),
+            balance=Decimal("900.00"),
+            fingerprint="6" * 64,
+        ),
+    ]
+
+    report = build_validation_report(
+        file_id=uuid4(),
+        inspection_result=_inspection_result(canonical_transactions=transactions),
+        supports_canonical_mapping=True,
+        quarantine_required=False,
+    )
+
+    assert validation_service._infer_source_date_order(transactions) == "ascending"  # noqa: SLF001
+    assert report.final_status == "PASS"
+    assert all(
+        "Running balance continuity mismatches" not in message for message in report.messages
+    )
+
+
+def test_balance_reconciliation_warns_on_ascending_mismatch() -> None:
+    transactions = [
+        canonical_transaction(
+            source_row_number=1,
+            transaction_date=date(2026, 4, 1),
+            amount=Decimal("10.00"),
+            balance=Decimal("100.00"),
+            fingerprint="9" * 64,
+        ),
+        canonical_transaction(
+            source_row_number=2,
+            transaction_date=date(2026, 4, 2),
+            amount=Decimal("10.00"),
+            balance=Decimal("105.00"),
+            fingerprint="0" * 64,
+        ),
+    ]
+
+    report = build_validation_report(
+        file_id=uuid4(),
+        inspection_result=_inspection_result(canonical_transactions=transactions),
+        supports_canonical_mapping=True,
+        quarantine_required=False,
+    )
+
+    assert report.final_status == "PASS_WITH_WARNINGS"
+    assert any("Running balance continuity mismatches" in message for message in report.messages)

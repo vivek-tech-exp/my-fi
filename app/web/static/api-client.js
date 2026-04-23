@@ -29,6 +29,20 @@ function appendOptionalParam(params, key, value) {
   }
 }
 
+function appendLedgerFilters(params, filters) {
+  appendOptionalParam(params, "bank_name", filters.bankName);
+  appendOptionalParam(params, "account_id", filters.accountId);
+  appendOptionalParam(params, "direction", filters.direction);
+  appendOptionalParam(params, "description_contains", filters.search);
+  appendOptionalParam(params, "amount_min", filters.amountMin);
+  appendOptionalParam(params, "amount_max", filters.amountMax);
+  appendOptionalParam(params, "duplicate_confidence", filters.duplicateConfidence);
+  appendOptionalParam(params, "has_balance", filters.hasBalance);
+  appendOptionalParam(params, "source_file_id", filters.sourceFileId);
+  appendOptionalParam(params, "transaction_date_from", filters.dateFrom);
+  appendOptionalParam(params, "transaction_date_to", filters.dateTo);
+}
+
 export async function uploadCsvBatch({ bankName, files }) {
   const formData = new FormData();
   formData.set("bank_name", bankName);
@@ -62,35 +76,16 @@ export async function reprocessImport(fileId) {
 
 export async function listTransactions(filters) {
   const params = new URLSearchParams();
-  const limit = Number(filters.limit || 100);
-  const offset = Number(filters.offset || 0);
-  appendOptionalParam(params, "bank_name", filters.bankName);
-  appendOptionalParam(params, "account_id", filters.accountId);
-  appendOptionalParam(params, "direction", filters.direction);
-  appendOptionalParam(params, "transaction_date_from", filters.dateFrom);
-  appendOptionalParam(params, "transaction_date_to", filters.dateTo);
-  appendOptionalParam(params, "limit", Math.min(limit + 1, 1000));
-  appendOptionalParam(params, "offset", offset);
+  appendLedgerFilters(params, filters);
+  appendOptionalParam(params, "limit", filters.limit || 50);
+  appendOptionalParam(params, "offset", filters.offset || 0);
 
-  const rows = await requestJson(`/transactions?${params.toString()}`);
-  return {
-    rows: rows.slice(0, limit),
-    page: {
-      limit,
-      offset,
-      hasNext: rows.length > limit,
-      hasPrevious: offset > 0,
-    },
-  };
+  return requestJson(`/transactions?${params.toString()}`);
 }
 
 export async function getTransactionSummary(filters) {
   const params = new URLSearchParams({ group_by: "month" });
-  appendOptionalParam(params, "bank_name", filters.bankName);
-  appendOptionalParam(params, "account_id", filters.accountId);
-  appendOptionalParam(params, "direction", filters.direction);
-  appendOptionalParam(params, "transaction_date_from", filters.dateFrom);
-  appendOptionalParam(params, "transaction_date_to", filters.dateTo);
+  appendLedgerFilters(params, filters);
   appendOptionalParam(params, "limit", filters.limit || 100);
   appendOptionalParam(params, "offset", filters.offset || 0);
 

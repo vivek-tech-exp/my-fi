@@ -7,7 +7,12 @@ from uuid import UUID, uuid4
 from app.models.imports import ImportStatus
 from app.models.ledger import CanonicalTransactionRecord, TransactionDirection
 from app.models.parsing import ParserInspectionResult
-from app.models.validation import ValidationCheckStatus, ValidationReportRecord
+from app.models.validation import (
+    ValidationCheckStatus,
+    ValidationIssueRecord,
+    ValidationIssueSeverity,
+    ValidationReportRecord,
+)
 
 
 def build_validation_report(
@@ -20,73 +25,185 @@ def build_validation_report(
 ) -> ValidationReportRecord:
     """Build a conservative import validation report from parser output."""
 
-    failure_messages: list[str] = []
-    warning_messages: list[str] = []
-    informational_messages: list[str] = []
+    failure_issues: list[ValidationIssueRecord] = []
+    warning_issues: list[ValidationIssueRecord] = []
+    informational_issues: list[ValidationIssueRecord] = []
 
     if quarantine_required:
-        failure_messages.append(
-            normalization_failure_reason
-            or "File could not be normalized and was quarantined before parsing."
+        failure_issues.append(
+            _issue(
+                severity=ValidationIssueSeverity.ERROR,
+                code="file_quarantined",
+                title="File could not be read",
+                detail=normalization_failure_reason
+                or "File could not be normalized and was quarantined before parsing.",
+                suggested_action="Check the file encoding and upload a readable CSV export.",
+            )
         )
 
     if not inspection_result.header_detected and not quarantine_required:
-        failure_messages.append("No transaction header row was detected.")
+        failure_issues.append(
+            _issue(
+                severity=ValidationIssueSeverity.ERROR,
+                code="header_missing",
+                title="Transaction header not detected",
+                detail="No transaction header row was detected.",
+                suggested_action="Check whether this bank export format needs a parser update.",
+            )
+        )
 
     if inspection_result.raw_rows_recorded == 0 and not quarantine_required:
-        failure_messages.append("No readable rows were recorded during parser inspection.")
+        failure_issues.append(
+            _issue(
+                severity=ValidationIssueSeverity.ERROR,
+                code="no_readable_rows",
+                title="No readable rows",
+                detail="No readable rows were recorded during parser inspection.",
+                suggested_action="Confirm the uploaded file is a CSV statement export.",
+            )
+        )
 
     if inspection_result.suspicious_rows_recorded > 0:
-        warning_messages.append(
-            f"{inspection_result.suspicious_rows_recorded} suspicious rows need review."
+        warning_issues.append(
+            _issue(
+                severity=ValidationIssueSeverity.WARNING,
+                code="suspicious_rows",
+                title="Rows need review",
+                detail=f"{inspection_result.suspicious_rows_recorded} suspicious rows need review.",
+                suggested_action="Open diagnostics and inspect rows marked Needs review.",
+                affected_row_count=inspection_result.suspicious_rows_recorded,
+            )
         )
 
     if inspection_result.duplicate_transactions_detected > 0:
-        warning_messages.append(
-            f"{inspection_result.duplicate_transactions_detected} duplicate transactions "
-            "were skipped."
+        warning_issues.append(
+            _issue(
+                severity=ValidationIssueSeverity.WARNING,
+                code="duplicate_transactions",
+                title="Duplicate transactions skipped",
+                detail=(
+                    f"{inspection_result.duplicate_transactions_detected} duplicate transactions "
+                    "were skipped."
+                ),
+                suggested_action=(
+                    "Review duplicate counts if the statement overlaps another import."
+                ),
+                affected_row_count=inspection_result.duplicate_transactions_detected,
+            )
         )
 
     if inspection_result.ambiguous_transactions_detected > 0:
-        warning_messages.append(
-            f"{inspection_result.ambiguous_transactions_detected} transactions were imported "
-            "with ambiguous duplicate confidence."
+        warning_issues.append(
+            _issue(
+                severity=ValidationIssueSeverity.WARNING,
+                code="ambiguous_duplicates",
+                title="Ambiguous duplicate confidence",
+                detail=(
+                    f"{inspection_result.ambiguous_transactions_detected} transactions were "
+                    "imported "
+                    "with ambiguous duplicate confidence."
+                ),
+                suggested_action="Check the imported transactions before relying on totals.",
+                affected_row_count=inspection_result.ambiguous_transactions_detected,
+            )
         )
 
     if supports_canonical_mapping and inspection_result.transactions_imported == 0:
         if inspection_result.duplicate_transactions_detected > 0:
-            warning_messages.append(
-                "No new transactions were imported because all rows duplicated "
-                "existing ledger rows."
+            warning_issues.append(
+                _issue(
+                    severity=ValidationIssueSeverity.WARNING,
+                    code="all_rows_duplicate",
+                    title="No new transactions",
+                    detail=(
+                        "No new transactions were imported because all rows duplicated "
+                        "existing ledger rows."
+                    ),
+                    suggested_action="No action is needed if this was an intentional re-upload.",
+                    affected_row_count=inspection_result.duplicate_transactions_detected,
+                )
             )
         elif not quarantine_required:
-            failure_messages.append("No canonical transactions were imported.")
+            failure_issues.append(
+                _issue(
+                    severity=ValidationIssueSeverity.ERROR,
+                    code="no_transactions_imported",
+                    title="No transactions imported",
+                    detail="No canonical transactions were imported.",
+                    suggested_action="Review diagnostics to identify parser or CSV format gaps.",
+                )
+            )
 
     if inspection_result.statement_start_date and inspection_result.statement_end_date:
         if inspection_result.statement_start_date > inspection_result.statement_end_date:
-            failure_messages.append("Statement start date is after statement end date.")
+            failure_issues.append(
+                _issue(
+                    severity=ValidationIssueSeverity.ERROR,
+                    code="invalid_statement_period",
+                    title="Invalid statement period",
+                    detail="Statement start date is after statement end date.",
+                    suggested_action="Check parser date extraction for this bank export.",
+                )
+            )
 
     if _has_non_positive_amount(inspection_result):
-        failure_messages.append("One or more canonical transactions have a non-positive amount.")
+        failure_issues.append(
+            _issue(
+                severity=ValidationIssueSeverity.ERROR,
+                code="non_positive_amount",
+                title="Invalid transaction amount",
+                detail="One or more canonical transactions have a non-positive amount.",
+                suggested_action="Review parser amount mapping before trusting this import.",
+            )
+        )
 
     if _has_transaction_outside_statement_period(inspection_result):
-        warning_messages.append("One or more transactions fall outside the statement date range.")
+        warning_issues.append(
+            _issue(
+                severity=ValidationIssueSeverity.WARNING,
+                code="transaction_outside_statement_period",
+                title="Transaction outside statement period",
+                detail="One or more transactions fall outside the statement date range.",
+                suggested_action="Check the statement period and transaction date columns.",
+            )
+        )
 
     balance_mismatch_count = _running_balance_mismatch_count(inspection_result)
     if balance_mismatch_count > 0:
-        warning_messages.append(
-            "Running balance continuity mismatches were detected across "
-            f"{balance_mismatch_count} transitions."
+        warning_issues.append(
+            _issue(
+                severity=ValidationIssueSeverity.WARNING,
+                code="running_balance_mismatch",
+                title="Running balance mismatch",
+                detail=(
+                    "Running balance continuity mismatches were detected across "
+                    f"{balance_mismatch_count} transitions."
+                ),
+                suggested_action=(
+                    "Review balance-bearing transactions for parser or bank-format issues."
+                ),
+                affected_row_count=balance_mismatch_count,
+            )
         )
 
     if supports_canonical_mapping and inspection_result.transactions_imported > 0:
-        informational_messages.append(
-            f"{inspection_result.transactions_imported} canonical transactions were imported."
+        informational_issues.append(
+            _issue(
+                severity=ValidationIssueSeverity.INFO,
+                code="transactions_imported",
+                title="Transactions imported",
+                detail=(
+                    f"{inspection_result.transactions_imported} canonical transactions were "
+                    "imported."
+                ),
+                suggested_action="No action is required.",
+                affected_row_count=inspection_result.transactions_imported,
+            )
         )
 
     reconciliation_status = _derive_reconciliation_status(
-        failure_messages=failure_messages,
-        warning_messages=warning_messages,
+        failure_issues=failure_issues,
+        warning_issues=warning_issues,
     )
     ledger_continuity_status = _derive_ledger_continuity_status(inspection_result)
     final_status = _derive_final_status(
@@ -106,22 +223,41 @@ def build_validation_report(
         reconciliation_status=reconciliation_status,
         ledger_continuity_status=ledger_continuity_status,
         final_status=final_status.value,
-        messages=[*failure_messages, *warning_messages, *informational_messages],
+        issues=[*failure_issues, *warning_issues, *informational_issues],
     )
 
 
 def _derive_reconciliation_status(
     *,
-    failure_messages: list[str],
-    warning_messages: list[str],
+    failure_issues: list[ValidationIssueRecord],
+    warning_issues: list[ValidationIssueRecord],
 ) -> ValidationCheckStatus:
-    if failure_messages:
+    if failure_issues:
         return ValidationCheckStatus.FAIL
 
-    if warning_messages:
+    if warning_issues:
         return ValidationCheckStatus.WARN
 
     return ValidationCheckStatus.PASS
+
+
+def _issue(
+    *,
+    severity: ValidationIssueSeverity,
+    code: str,
+    title: str,
+    detail: str,
+    suggested_action: str,
+    affected_row_count: int = 0,
+) -> ValidationIssueRecord:
+    return ValidationIssueRecord(
+        severity=severity,
+        code=code,
+        title=title,
+        detail=detail,
+        suggested_action=suggested_action,
+        affected_row_count=affected_row_count,
+    )
 
 
 def _derive_ledger_continuity_status(

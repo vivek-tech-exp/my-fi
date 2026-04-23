@@ -15,7 +15,7 @@ from app.db import source_files as source_files_repo
 from app.db import validation_reports as validation_reports_repo
 from app.db.database import database_connection, initialize_database
 from app.models.imports import BankName, ImportStatus
-from app.models.ledger import TransactionDirection, TransactionSummaryGroupBy
+from app.models.ledger import DuplicateConfidence, TransactionDirection, TransactionSummaryGroupBy
 from app.models.parsing import RawRowType
 from tests.factories import (
     canonical_transaction,
@@ -166,7 +166,10 @@ def test_canonical_transaction_repository_round_trips_and_deletes_rows() -> None
         transaction_date=datetime(2026, 4, 2).date(),
         amount=Decimal("125.00"),
         direction=TransactionDirection.CREDIT,
+        balance=None,
+        description_raw="Salary April",
         fingerprint="5" * 64,
+        duplicate_confidence=DuplicateConfidence.AMBIGUOUS,
         created_at=datetime(2026, 4, 2),
     )
     duplicate_candidate = canonical_transaction(
@@ -231,6 +234,24 @@ def test_canonical_transaction_repository_round_trips_and_deletes_rows() -> None
             )[0].transaction_fingerprint
             == "3" * 64
         )
+        assert (
+            canonical_repo.count_canonical_transactions(
+                description_contains="salary",
+                amount_min=Decimal("100.00"),
+                amount_max=Decimal("200.00"),
+                duplicate_confidence=DuplicateConfidence.AMBIGUOUS,
+                has_balance=False,
+                connection=connection,
+            )
+            == 1
+        )
+        assert (
+            canonical_repo.count_canonical_transactions(
+                has_balance=True,
+                connection=connection,
+            )
+            == 1
+        )
         summary_rows = canonical_repo.summarize_canonical_transactions(
             group_by=TransactionSummaryGroupBy.MONTH,
             direction=TransactionDirection.DEBIT,
@@ -257,6 +278,23 @@ def test_canonical_transaction_repository_round_trips_and_deletes_rows() -> None
             return None
 
     assert canonical_repo._fetch_canonical_transaction_count(EmptyCountConnection(), uuid4()) == 0
+    assert (
+        canonical_repo._count_canonical_transactions(
+            EmptyCountConnection(),
+            bank_name=None,
+            account_id=None,
+            source_file_id=None,
+            direction=None,
+            description_contains=None,
+            amount_min=None,
+            amount_max=None,
+            duplicate_confidence=None,
+            has_balance=None,
+            transaction_date_from=None,
+            transaction_date_to=None,
+        )
+        == 0
+    )
     with pytest.raises(ValueError):
         canonical_repo._date_bucket_expression("year")  # type: ignore[arg-type]
 

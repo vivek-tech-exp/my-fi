@@ -52,12 +52,36 @@ class CanonicalTransactionRecord(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class CanonicalTransactionViewRecord(CanonicalTransactionRecord):
+    """Canonical transaction enriched with source import context for UI inspection."""
+
+    source_filename: str | None = None
+    source_import_status: str | None = None
+    source_statement_start_date: date | None = None
+    source_statement_end_date: date | None = None
+
+
+class TransactionListResponse(BaseModel):
+    """Paginated transaction list response."""
+
+    items: list[CanonicalTransactionViewRecord] = Field(default_factory=list)
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    has_next: bool
+    has_previous: bool
+
+
 class TransactionSummaryRecord(BaseModel):
     """Aggregated transaction metrics for a grouped ledger period."""
 
     period_start: date
     group_by: TransactionSummaryGroupBy
     transaction_count: int = Field(ge=0)
+    debit_count: int = Field(ge=0)
+    credit_count: int = Field(ge=0)
     debit_total: Decimal
     credit_total: Decimal
     net_amount: Decimal
+    opening_balance: Decimal | None = None
+    closing_balance: Decimal | None = None

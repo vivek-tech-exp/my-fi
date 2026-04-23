@@ -13,6 +13,8 @@ import duckdb
 from app.db.database import database_connection
 from app.models.ledger import (
     CanonicalTransactionRecord,
+    CanonicalTransactionViewRecord,
+    DuplicateConfidence,
     TransactionDirection,
     TransactionSummaryGroupBy,
     TransactionSummaryRecord,
@@ -200,12 +202,17 @@ def list_canonical_transactions(
     account_id: str | None = None,
     source_file_id: UUID | None = None,
     direction: TransactionDirection | None = None,
+    description_contains: str | None = None,
+    amount_min: Decimal | None = None,
+    amount_max: Decimal | None = None,
+    duplicate_confidence: DuplicateConfidence | None = None,
+    has_balance: bool | None = None,
     transaction_date_from: date | None = None,
     transaction_date_to: date | None = None,
     limit: int = 100,
     offset: int = 0,
     connection: duckdb.DuckDBPyConnection | None = None,
-) -> list[CanonicalTransactionRecord]:
+) -> list[CanonicalTransactionViewRecord]:
     """List canonical transactions with optional filters and pagination."""
 
     if connection is None:
@@ -216,6 +223,11 @@ def list_canonical_transactions(
                 account_id=account_id,
                 source_file_id=source_file_id,
                 direction=direction,
+                description_contains=description_contains,
+                amount_min=amount_min,
+                amount_max=amount_max,
+                duplicate_confidence=duplicate_confidence,
+                has_balance=has_balance,
                 transaction_date_from=transaction_date_from,
                 transaction_date_to=transaction_date_to,
                 limit=limit,
@@ -228,10 +240,65 @@ def list_canonical_transactions(
         account_id=account_id,
         source_file_id=source_file_id,
         direction=direction,
+        description_contains=description_contains,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        duplicate_confidence=duplicate_confidence,
+        has_balance=has_balance,
         transaction_date_from=transaction_date_from,
         transaction_date_to=transaction_date_to,
         limit=limit,
         offset=offset,
+    )
+
+
+def count_canonical_transactions(
+    *,
+    bank_name: str | None = None,
+    account_id: str | None = None,
+    source_file_id: UUID | None = None,
+    direction: TransactionDirection | None = None,
+    description_contains: str | None = None,
+    amount_min: Decimal | None = None,
+    amount_max: Decimal | None = None,
+    duplicate_confidence: DuplicateConfidence | None = None,
+    has_balance: bool | None = None,
+    transaction_date_from: date | None = None,
+    transaction_date_to: date | None = None,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> int:
+    """Count canonical transactions with the same filters used by the list endpoint."""
+
+    if connection is None:
+        with database_connection() as new_connection:
+            return _count_canonical_transactions(
+                new_connection,
+                bank_name=bank_name,
+                account_id=account_id,
+                source_file_id=source_file_id,
+                direction=direction,
+                description_contains=description_contains,
+                amount_min=amount_min,
+                amount_max=amount_max,
+                duplicate_confidence=duplicate_confidence,
+                has_balance=has_balance,
+                transaction_date_from=transaction_date_from,
+                transaction_date_to=transaction_date_to,
+            )
+
+    return _count_canonical_transactions(
+        connection,
+        bank_name=bank_name,
+        account_id=account_id,
+        source_file_id=source_file_id,
+        direction=direction,
+        description_contains=description_contains,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        duplicate_confidence=duplicate_confidence,
+        has_balance=has_balance,
+        transaction_date_from=transaction_date_from,
+        transaction_date_to=transaction_date_to,
     )
 
 
@@ -242,6 +309,11 @@ def summarize_canonical_transactions(
     account_id: str | None = None,
     source_file_id: UUID | None = None,
     direction: TransactionDirection | None = None,
+    description_contains: str | None = None,
+    amount_min: Decimal | None = None,
+    amount_max: Decimal | None = None,
+    duplicate_confidence: DuplicateConfidence | None = None,
+    has_balance: bool | None = None,
     transaction_date_from: date | None = None,
     transaction_date_to: date | None = None,
     limit: int = 100,
@@ -259,6 +331,11 @@ def summarize_canonical_transactions(
                 account_id=account_id,
                 source_file_id=source_file_id,
                 direction=direction,
+                description_contains=description_contains,
+                amount_min=amount_min,
+                amount_max=amount_max,
+                duplicate_confidence=duplicate_confidence,
+                has_balance=has_balance,
                 transaction_date_from=transaction_date_from,
                 transaction_date_to=transaction_date_to,
                 limit=limit,
@@ -272,6 +349,11 @@ def summarize_canonical_transactions(
         account_id=account_id,
         source_file_id=source_file_id,
         direction=direction,
+        description_contains=description_contains,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        duplicate_confidence=duplicate_confidence,
+        has_balance=has_balance,
         transaction_date_from=transaction_date_from,
         transaction_date_to=transaction_date_to,
         limit=limit,
@@ -389,50 +471,106 @@ def _list_canonical_transactions(
     account_id: str | None,
     source_file_id: UUID | None,
     direction: TransactionDirection | None,
+    description_contains: str | None,
+    amount_min: Decimal | None,
+    amount_max: Decimal | None,
+    duplicate_confidence: DuplicateConfidence | None,
+    has_balance: bool | None,
     transaction_date_from: date | None,
     transaction_date_to: date | None,
     limit: int,
     offset: int,
-) -> list[CanonicalTransactionRecord]:
+) -> list[CanonicalTransactionViewRecord]:
     query = """
     SELECT
-        transaction_id,
-        source_file_id,
-        raw_row_id,
-        bank_name,
-        account_id,
-        transaction_date,
-        value_date,
-        description_raw,
-        amount,
-        direction,
-        balance,
-        currency,
-        source_row_number,
-        reference_number,
-        transaction_fingerprint,
-        duplicate_confidence,
-        created_at
-    FROM canonical_transactions
+        ct.transaction_id,
+        ct.source_file_id,
+        ct.raw_row_id,
+        ct.bank_name,
+        ct.account_id,
+        ct.transaction_date,
+        ct.value_date,
+        ct.description_raw,
+        ct.amount,
+        ct.direction,
+        ct.balance,
+        ct.currency,
+        ct.source_row_number,
+        ct.reference_number,
+        ct.transaction_fingerprint,
+        ct.duplicate_confidence,
+        ct.created_at,
+        sf.original_filename,
+        sf.import_status,
+        sf.statement_start_date,
+        sf.statement_end_date
+    FROM canonical_transactions ct
+    LEFT JOIN source_files sf ON sf.file_id = ct.source_file_id
     """
     filters, parameters = _build_canonical_transaction_filters(
         bank_name=bank_name,
         account_id=account_id,
         source_file_id=source_file_id,
         direction=direction,
+        description_contains=description_contains,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        duplicate_confidence=duplicate_confidence,
+        has_balance=has_balance,
         transaction_date_from=transaction_date_from,
         transaction_date_to=transaction_date_to,
+        table_alias="ct",
     )
     if filters:
         query += " WHERE " + " AND ".join(filters)
 
     query += """
-    ORDER BY transaction_date DESC, created_at DESC, transaction_id DESC
+    ORDER BY ct.transaction_date DESC, ct.created_at DESC, ct.transaction_id DESC
     LIMIT ? OFFSET ?
     """
     parameters.extend([limit, offset])
     rows = connection.execute(query, parameters).fetchall()
-    return [_row_to_canonical_transaction_record(row) for row in rows]
+    return [_row_to_canonical_transaction_view_record(row) for row in rows]
+
+
+def _count_canonical_transactions(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    bank_name: str | None,
+    account_id: str | None,
+    source_file_id: UUID | None,
+    direction: TransactionDirection | None,
+    description_contains: str | None,
+    amount_min: Decimal | None,
+    amount_max: Decimal | None,
+    duplicate_confidence: DuplicateConfidence | None,
+    has_balance: bool | None,
+    transaction_date_from: date | None,
+    transaction_date_to: date | None,
+) -> int:
+    query = "SELECT COUNT(*) FROM canonical_transactions ct"
+    filters, parameters = _build_canonical_transaction_filters(
+        bank_name=bank_name,
+        account_id=account_id,
+        source_file_id=source_file_id,
+        direction=direction,
+        description_contains=description_contains,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        duplicate_confidence=duplicate_confidence,
+        has_balance=has_balance,
+        transaction_date_from=transaction_date_from,
+        transaction_date_to=transaction_date_to,
+        table_alias="ct",
+    )
+    if filters:
+        query += " WHERE " + " AND ".join(filters)
+
+    row = connection.execute(query, parameters).fetchone()
+    if row is None:
+        return 0
+
+    return cast(int, row[0])
 
 
 def _summarize_canonical_transactions(
@@ -443,6 +581,11 @@ def _summarize_canonical_transactions(
     account_id: str | None,
     source_file_id: UUID | None,
     direction: TransactionDirection | None,
+    description_contains: str | None,
+    amount_min: Decimal | None,
+    amount_max: Decimal | None,
+    duplicate_confidence: DuplicateConfidence | None,
+    has_balance: bool | None,
     transaction_date_from: date | None,
     transaction_date_to: date | None,
     limit: int,
@@ -450,25 +593,66 @@ def _summarize_canonical_transactions(
 ) -> list[TransactionSummaryRecord]:
     date_bucket_expression = _date_bucket_expression(group_by)
     query = f"""
-    SELECT
-        {date_bucket_expression} AS period_start,
-        COUNT(*) AS transaction_count,
-        COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN amount ELSE 0 END), 0) AS debit_total,
-        COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN amount ELSE 0 END), 0) AS credit_total,
-        COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN amount ELSE -amount END), 0) AS net_amount
-    FROM canonical_transactions
+    WITH filtered AS (
+        SELECT
+            ct.*,
+            {date_bucket_expression} AS period_start
+        FROM canonical_transactions ct
     """
     filters, parameters = _build_canonical_transaction_filters(
         bank_name=bank_name,
         account_id=account_id,
         source_file_id=source_file_id,
         direction=direction,
+        description_contains=description_contains,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        duplicate_confidence=duplicate_confidence,
+        has_balance=has_balance,
         transaction_date_from=transaction_date_from,
         transaction_date_to=transaction_date_to,
+        table_alias="ct",
     )
     if filters:
         query += " WHERE " + " AND ".join(filters)
 
+    query += """
+    ),
+    ranked AS (
+        SELECT
+            *,
+            ROW_NUMBER() OVER (
+                PARTITION BY period_start
+                ORDER BY
+                    CASE WHEN balance IS NULL THEN 1 ELSE 0 END,
+                    transaction_date ASC,
+                    source_row_number ASC,
+                    created_at ASC,
+                    transaction_id ASC
+            ) AS opening_rank,
+            ROW_NUMBER() OVER (
+                PARTITION BY period_start
+                ORDER BY
+                    CASE WHEN balance IS NULL THEN 1 ELSE 0 END,
+                    transaction_date DESC,
+                    source_row_number DESC,
+                    created_at DESC,
+                    transaction_id DESC
+            ) AS closing_rank
+        FROM filtered
+    )
+    SELECT
+        period_start,
+        COUNT(*) AS transaction_count,
+        COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN 1 ELSE 0 END), 0) AS debit_count,
+        COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN 1 ELSE 0 END), 0) AS credit_count,
+        COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN amount ELSE 0 END), 0) AS debit_total,
+        COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN amount ELSE 0 END), 0) AS credit_total,
+        COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN amount ELSE -amount END), 0) AS net_amount,
+        MAX(CASE WHEN opening_rank = 1 THEN balance ELSE NULL END) AS opening_balance,
+        MAX(CASE WHEN closing_rank = 1 THEN balance ELSE NULL END) AS closing_balance
+    FROM ranked
+    """
     query += """
     GROUP BY period_start
     ORDER BY period_start DESC
@@ -482,9 +666,13 @@ def _summarize_canonical_transactions(
                 "period_start": row[0],
                 "group_by": group_by.value,
                 "transaction_count": row[1],
-                "debit_total": row[2],
-                "credit_total": row[3],
-                "net_amount": row[4],
+                "debit_count": row[2],
+                "credit_count": row[3],
+                "debit_total": row[4],
+                "credit_total": row[5],
+                "net_amount": row[6],
+                "opening_balance": row[7],
+                "closing_balance": row[8],
             }
         )
         for row in rows
@@ -493,7 +681,7 @@ def _summarize_canonical_transactions(
 
 def _date_bucket_expression(group_by: TransactionSummaryGroupBy) -> str:
     if group_by == TransactionSummaryGroupBy.MONTH:
-        return "CAST(date_trunc('month', transaction_date) AS DATE)"
+        return "CAST(date_trunc('month', ct.transaction_date) AS DATE)"
 
     group_by_value = group_by.value if hasattr(group_by, "value") else str(group_by)
     raise ValueError(f"Unsupported transaction summary grouping '{group_by_value}'.")
@@ -505,28 +693,55 @@ def _build_canonical_transaction_filters(
     account_id: str | None,
     source_file_id: UUID | None,
     direction: TransactionDirection | None,
+    description_contains: str | None,
+    amount_min: Decimal | None,
+    amount_max: Decimal | None,
+    duplicate_confidence: DuplicateConfidence | None,
+    has_balance: bool | None,
     transaction_date_from: date | None,
     transaction_date_to: date | None,
+    table_alias: str | None = None,
 ) -> tuple[list[str], list[object]]:
     filters: list[str] = []
     parameters: list[object] = []
+    prefix = f"{table_alias}." if table_alias else ""
     if bank_name is not None:
-        filters.append("bank_name = ?")
+        filters.append(f"{prefix}bank_name = ?")
         parameters.append(bank_name)
     if account_id is not None:
-        filters.append("COALESCE(account_id, '') = ?")
+        filters.append(f"COALESCE({prefix}account_id, '') = ?")
         parameters.append(account_id)
     if source_file_id is not None:
-        filters.append("source_file_id = ?")
+        filters.append(f"{prefix}source_file_id = ?")
         parameters.append(str(source_file_id))
     if direction is not None:
-        filters.append("direction = ?")
+        filters.append(f"{prefix}direction = ?")
         parameters.append(direction.value)
+    if description_contains is not None:
+        search_term = f"%{description_contains.lower()}%"
+        filters.append(
+            f"(LOWER({prefix}description_raw) LIKE ? "
+            f"OR LOWER(COALESCE({prefix}reference_number, '')) LIKE ?)"
+        )
+        parameters.extend([search_term, search_term])
+    if amount_min is not None:
+        filters.append(f"{prefix}amount >= ?")
+        parameters.append(amount_min)
+    if amount_max is not None:
+        filters.append(f"{prefix}amount <= ?")
+        parameters.append(amount_max)
+    if duplicate_confidence is not None:
+        filters.append(f"{prefix}duplicate_confidence = ?")
+        parameters.append(duplicate_confidence.value)
+    if has_balance is True:
+        filters.append(f"{prefix}balance IS NOT NULL")
+    elif has_balance is False:
+        filters.append(f"{prefix}balance IS NULL")
     if transaction_date_from is not None:
-        filters.append("transaction_date >= ?")
+        filters.append(f"{prefix}transaction_date >= ?")
         parameters.append(transaction_date_from)
     if transaction_date_to is not None:
-        filters.append("transaction_date <= ?")
+        filters.append(f"{prefix}transaction_date <= ?")
         parameters.append(transaction_date_to)
 
     return filters, parameters
@@ -562,6 +777,21 @@ def _row_to_canonical_transaction_record(row: tuple[object, ...]) -> CanonicalTr
             "transaction_fingerprint": cast(str, row[14]),
             "duplicate_confidence": cast(str, row[15]),
             "created_at": _with_utc_timezone(cast(datetime, row[16])),
+        }
+    )
+
+
+def _row_to_canonical_transaction_view_record(
+    row: tuple[object, ...],
+) -> CanonicalTransactionViewRecord:
+    base_record = _row_to_canonical_transaction_record(row[:17])
+    return CanonicalTransactionViewRecord.model_validate(
+        {
+            **base_record.model_dump(),
+            "source_filename": cast(str | None, row[17]),
+            "source_import_status": cast(str | None, row[18]),
+            "source_statement_start_date": cast(date | None, row[19]),
+            "source_statement_end_date": cast(date | None, row[20]),
         }
     )
 

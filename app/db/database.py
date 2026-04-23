@@ -94,9 +94,15 @@ CREATE TABLE IF NOT EXISTS validation_reports (
     reconciliation_status VARCHAR NOT NULL,
     ledger_continuity_status VARCHAR NOT NULL,
     final_status VARCHAR NOT NULL,
+    issues VARCHAR NOT NULL DEFAULT '[]',
     messages VARCHAR NOT NULL,
     generated_at TIMESTAMP NOT NULL
 );
+"""
+
+VALIDATION_REPORTS_ISSUES_COLUMN_SQL = """
+ALTER TABLE validation_reports
+ADD COLUMN IF NOT EXISTS issues VARCHAR DEFAULT '[]';
 """
 
 VALIDATION_REPORTS_FILE_ID_INDEX_SQL = """
@@ -131,4 +137,5 @@ def initialize_database() -> None:
         connection.execute(CANONICAL_TRANSACTIONS_TABLE_SQL)
         connection.execute(CANONICAL_TRANSACTIONS_FILE_ID_INDEX_SQL)
         connection.execute(VALIDATION_REPORTS_TABLE_SQL)
+        connection.execute(VALIDATION_REPORTS_ISSUES_COLUMN_SQL)
         connection.execute(VALIDATION_REPORTS_FILE_ID_INDEX_SQL)

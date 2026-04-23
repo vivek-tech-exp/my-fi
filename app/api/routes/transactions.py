@@ -180,7 +180,7 @@ def get_transactions_summary(
         date | None,
         Query(description="Optional inclusive upper bound for transaction date"),
     ] = None,
-    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 1000,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[TransactionSummaryRecord]:
     _validate_transaction_filters(

@@ -95,7 +95,7 @@ export function emptyState(message) {
   return `<div class="empty-state">${escapeHtml(message)}</div>`;
 }
 
-export function renderUploadView({ selectedBank, uploadResult }) {
+export function renderUploadView({ selectedBank, uploadResult, isBusy }) {
   return `
     <section class="panel">
       <form id="upload-form" class="upload-form">
@@ -112,9 +112,9 @@ export function renderUploadView({ selectedBank, uploadResult }) {
         </label>
         <label class="file-picker">
           <span>CSV files</span>
-          <input id="upload-files" type="file" name="files" accept=".csv,text/csv" multiple />
+          <input id="upload-files" type="file" name="files" accept=".csv,text/csv" multiple ${isBusy ? "disabled" : ""} />
         </label>
-        <button class="primary-action" type="submit">Upload</button>
+        <button class="primary-action" type="submit" ${isBusy ? "disabled" : ""}>${isBusy ? "Uploading..." : "Upload"}</button>
       </form>
     </section>
     <section class="panel">
@@ -148,11 +148,13 @@ function renderUploadResultItem(item) {
   if (item.error) {
     return `
       <article class="result-card fail-card">
-        <div>
+        <div class="result-main">
           <strong>${escapeHtml(item.original_filename)}</strong>
           <p>${escapeHtml(item.error)}</p>
         </div>
-        <span class="status-pill fail">${item.status_code}</span>
+        <div class="result-side">
+          <span class="status-pill fail">${item.status_code}</span>
+        </div>
       </article>
     `;
   }
@@ -160,7 +162,7 @@ function renderUploadResultItem(item) {
   const result = item.result;
   return `
     <article class="result-card">
-      <div>
+      <div class="result-main">
         <strong>${escapeHtml(item.original_filename)}</strong>
         <p>${escapeHtml(result.message)}</p>
         <div class="compact-meta">
@@ -169,7 +171,7 @@ function renderUploadResultItem(item) {
           <span>${result.duplicate_transactions_detected} duplicates</span>
         </div>
       </div>
-      ${statusPill(result.status)}
+      <div class="result-side">${statusPill(result.status)}</div>
     </article>
   `;
 }
@@ -182,21 +184,30 @@ export function renderImportsView({
   selectedReport,
   selectedRows,
   rowFilter,
+  busy,
 }) {
   const filteredImports = filterImports(imports, importFilters);
+  const selectedVisible = filteredImports.some((item) => item.file_id === selectedImportId);
   return `
     ${renderImportOverview(imports)}
     <section class="split-view">
       <div class="panel">
         <div class="section-heading">
           <h2>Imports</h2>
-          <button id="refresh-imports" class="secondary-action" type="button">Refresh</button>
+          <button id="refresh-imports" class="secondary-action" type="button" ${busy.imports || busy.importDetail || busy.reprocess ? "disabled" : ""}>Refresh</button>
         </div>
-        ${renderImportFilters(importFilters)}
-        ${renderImportList(filteredImports, selectedImportId)}
+        ${renderImportFilters(importFilters, busy)}
+        ${renderImportList(filteredImports, selectedImportId, busy)}
       </div>
       <div class="panel detail-panel">
-        ${renderImportDetail({ selectedImport, selectedReport, selectedRows, rowFilter })}
+        ${renderImportDetail({
+          selectedImport,
+          selectedReport,
+          selectedRows,
+          rowFilter,
+          hiddenByFilters: Boolean(selectedImport && !selectedVisible),
+          busy,
+        })}
       </div>
     </section>
   `;
@@ -238,7 +249,7 @@ function metricCard(label, value, help) {
   `;
 }
 
-function renderImportFilters(filters) {
+function renderImportFilters(filters, busy) {
   return `
     <form id="imports-filter" class="filter-grid import-filter-grid">
       <label><span>Bank</span><select name="bankName">
@@ -277,13 +288,15 @@ function renderImportFilters(filters) {
           )
           .join("")}
       </select></label>
-      <button class="primary-action" type="submit">Apply</button>
-      <button id="clear-import-filters" class="secondary-action" type="button">Clear</button>
+      <div class="filter-actions">
+        <button class="primary-action" type="submit" ${busy.imports || busy.importDetail || busy.reprocess ? "disabled" : ""}>Apply</button>
+        <button id="clear-import-filters" class="secondary-action" type="button" ${busy.imports || busy.importDetail || busy.reprocess ? "disabled" : ""}>Clear</button>
+      </div>
     </form>
   `;
 }
 
-function renderImportList(imports, selectedImportId) {
+function renderImportList(imports, selectedImportId, busy) {
   if (!imports.length) {
     return emptyState("No imports match the current filters.");
   }
@@ -293,13 +306,13 @@ function renderImportList(imports, selectedImportId) {
       ${imports
         .map(
           (item) => `
-            <button class="import-row ${item.file_id === selectedImportId ? "active" : ""}" type="button" data-import-id="${item.file_id}">
-              <span>
+            <button class="import-row ${item.file_id === selectedImportId ? "active" : ""}" type="button" data-import-id="${item.file_id}" ${busy.importDetail || busy.reprocess ? "disabled" : ""}>
+              <span class="import-row-main">
                 <strong>${escapeHtml(item.original_filename)}</strong>
                 <small>${escapeHtml(item.bank_name)} · ${escapeHtml(item.account_id || "account pending")}</small>
                 <small>${formatDate(item.statement_start_date)} to ${formatDate(item.statement_end_date)}</small>
               </span>
-              <span>
+              <span class="import-row-side">
                 ${statusPill(item.status)}
                 <small>${item.transactions_imported} tx · ${item.suspicious_rows} issue rows · ${item.duplicate_rows} duplicates</small>
               </span>
@@ -311,9 +324,19 @@ function renderImportList(imports, selectedImportId) {
   `;
 }
 
-function renderImportDetail({ selectedImport, selectedReport, selectedRows, rowFilter }) {
+function renderImportDetail({
+  selectedImport,
+  selectedReport,
+  selectedRows,
+  rowFilter,
+  hiddenByFilters,
+  busy,
+}) {
   if (!selectedImport) {
     return emptyState("Select an import to inspect validation, actions, and diagnostics.");
+  }
+  if (hiddenByFilters) {
+    return emptyState("Selected import is hidden by the current filters. Clear filters or pick a visible import.");
   }
 
   const report = selectedReport || selectedImport.report;
@@ -324,11 +347,13 @@ function renderImportDetail({ selectedImport, selectedReport, selectedRows, rowF
         <h2>${escapeHtml(selectedImport.original_filename)}</h2>
         <p>${escapeHtml(selectedImport.bank_name)} · ${escapeHtml(selectedImport.account_id || "account pending")}</p>
       </div>
-      <button id="reprocess-import" class="secondary-action" type="button">Reprocess</button>
+      <button id="reprocess-import" class="secondary-action" type="button" ${busy.reprocess ? "disabled" : ""}>${busy.reprocess ? "Reprocessing..." : "Reprocess"}</button>
     </div>
     <div class="callout ${selectedImport.needs_action ? "warning-callout" : "pass-callout"}">
-      <strong>${escapeHtml(selectedImport.recommended_action)}</strong>
-      <span>${statusPill(selectedImport.status)}</span>
+      <div class="callout-main">
+        <strong>${escapeHtml(selectedImport.recommended_action)}</strong>
+      </div>
+      <div class="callout-side">${statusPill(selectedImport.status)}</div>
     </div>
     <div class="metric-strip">
       <span>${selectedImport.transactions_imported} transactions</span>
@@ -434,18 +459,28 @@ function renderRowsTable(rows, rowFilter) {
   `;
 }
 
-export function renderTransactionsView({ filters, imports, transactions, page, selectedTransactionId }) {
+export function renderTransactionsView({
+  filters,
+  imports,
+  transactions,
+  page,
+  selectedTransactionId,
+  busy,
+}) {
   const selectedTransaction = transactions.find(
     (transaction) => transaction.transaction_id === selectedTransactionId,
   );
   return `
     <section class="panel">
-      ${renderLedgerFilters("transactions-filter", filters, imports)}
+      ${renderLedgerFilters("transactions-filter", filters, imports, {
+        includePageSize: true,
+        busy: busy.transactions,
+      })}
     </section>
     <section class="panel">
       <div class="section-heading">
         <h2>Transactions</h2>
-        ${renderPagination(page, transactions.length)}
+        ${renderPagination(page, transactions.length, busy.transactions)}
       </div>
       ${renderTransactionsTable(transactions, selectedTransactionId)}
       ${selectedTransaction ? renderTransactionDetail(selectedTransaction) : ""}
@@ -453,19 +488,24 @@ export function renderTransactionsView({ filters, imports, transactions, page, s
   `;
 }
 
-export function renderSummaryView({ filters, imports, summary }) {
+export function renderSummaryView({ filters, imports, summary, busy }) {
   return `
     <section class="panel">
-      ${renderLedgerFilters("summary-filter", filters, imports)}
+      ${renderLedgerFilters("summary-filter", filters, imports, {
+        includePageSize: false,
+        busy: busy.summary,
+      })}
     </section>
     <section class="panel">
-      <div class="section-heading"><h2>Monthly summary</h2></div>
+      <div class="section-heading"><h2>Monthly summary</h2><span>${summary.length} month(s)</span></div>
       ${renderSummaryTable(summary)}
     </section>
   `;
 }
 
-function renderLedgerFilters(formId, filters, imports) {
+function renderLedgerFilters(formId, filters, imports, { includePageSize, busy }) {
+  const sourceOptions = scopedSourceImportOptions(filters, imports);
+  const selectedSourceLabel = sourceImportDisplayLabel(filters, imports);
   return `
     <form id="${formId}" class="filter-grid ledger-filter-grid">
       <label><span>Bank</span><select name="bankName">
@@ -510,32 +550,46 @@ function renderLedgerFilters(formId, filters, imports) {
           )
           .join("")}
       </select></label>
-      <label><span>Source import</span><select name="sourceFileId">
-        <option value="">all</option>
-        ${imports
-          .map(
-            (item) =>
-              `<option value="${item.file_id}" ${filters.sourceFileId === item.file_id ? "selected" : ""}>${escapeHtml(item.original_filename)}</option>`,
-          )
-          .join("")}
-      </select></label>
+      <label><span>Source import</span>
+        <input
+          type="search"
+          name="sourceImportQuery"
+          list="${formId}-source-imports"
+          value="${escapeHtml(selectedSourceLabel)}"
+          placeholder="search source filename"
+        />
+        <datalist id="${formId}-source-imports">
+          ${sourceOptions
+            .map(
+              (item) =>
+                `<option value="${escapeHtml(sourceImportLabel(item))}"></option>`,
+            )
+            .join("")}
+        </datalist>
+      </label>
       <label><span>From</span><input type="date" name="dateFrom" value="${escapeHtml(filters.dateFrom)}" /></label>
       <label><span>To</span><input type="date" name="dateTo" value="${escapeHtml(filters.dateTo)}" /></label>
-      <label><span>Page size</span><select name="limit">
+      ${
+        includePageSize
+          ? `<label><span>Page size</span><select name="limit">
         ${[25, 50, 100, 250, 500]
           .map(
             (limit) =>
               `<option value="${limit}" ${Number(filters.limit) === limit ? "selected" : ""}>${limit}</option>`,
           )
           .join("")}
-      </select></label>
-      <button class="primary-action" type="submit">Apply</button>
-      <button id="${formId}-clear" class="secondary-action" type="button">Clear</button>
+      </select></label>`
+          : ""
+      }
+      <div class="filter-actions">
+        <button class="primary-action" type="submit" ${busy ? "disabled" : ""}>Apply</button>
+        <button id="${formId}-clear" class="secondary-action" type="button" ${busy ? "disabled" : ""}>Clear</button>
+      </div>
     </form>
   `;
 }
 
-function renderPagination(page, visibleCount) {
+function renderPagination(page, visibleCount, busy) {
   const safePage = page || {
     limit: 50,
     offset: 0,
@@ -548,8 +602,8 @@ function renderPagination(page, visibleCount) {
   return `
     <div class="pager" aria-label="Transaction pagination">
       <span>Showing ${start}-${end} of ${safePage.total}</span>
-      <button id="transactions-prev" class="secondary-action" type="button" ${safePage.has_previous ? "" : "disabled"}>Previous</button>
-      <button id="transactions-next" class="secondary-action" type="button" ${safePage.has_next ? "" : "disabled"}>Next</button>
+      <button id="transactions-prev" class="secondary-action" type="button" ${safePage.has_previous && !busy ? "" : "disabled"}>Previous</button>
+      <button id="transactions-next" class="secondary-action" type="button" ${safePage.has_next && !busy ? "" : "disabled"}>Next</button>
     </div>
   `;
 }
@@ -600,20 +654,33 @@ function renderTransactionsTable(transactions, selectedTransactionId) {
 function renderTransactionDetail(transaction) {
   return `
     <aside class="detail-drawer">
-      <div class="section-heading">
-        <h3>Transaction detail</h3>
-        <span>${escapeHtml(transaction.direction)} · ${formatMoney(transaction.amount)}</span>
+      <div class="section-heading detail-drawer-heading">
+        <div class="detail-drawer-title">
+          <h3>Transaction detail</h3>
+          <p>${escapeHtml(transaction.direction)} · ${formatMoney(transaction.amount)} · ${escapeHtml(transaction.bank_name)}</p>
+        </div>
+        <button class="secondary-action" type="button" data-open-source-import="${transaction.source_file_id}">Open source import</button>
       </div>
       <dl>
+        <dt>Account</dt><dd>${escapeHtml(transaction.account_id || "Account not detected")}</dd>
+        <dt>Transaction date</dt><dd>${formatDate(transaction.transaction_date)}</dd>
+        <dt>Value date</dt><dd>${formatDate(transaction.value_date)}</dd>
         <dt>Narration</dt><dd>${escapeHtml(transaction.description_raw)}</dd>
         <dt>Reference</dt><dd>${escapeHtml(transaction.reference_number || "-")}</dd>
+        <dt>Balance</dt><dd>${formatMoney(transaction.balance)}</dd>
+        <dt>Import status</dt><dd>${escapeHtml(transaction.source_import_status || "-")}</dd>
         <dt>Source file</dt><dd>${escapeHtml(transaction.source_filename || "-")}</dd>
         <dt>Source row</dt><dd>${transaction.source_row_number}</dd>
         <dt>Statement period</dt><dd>${formatDate(transaction.source_statement_start_date)} to ${formatDate(transaction.source_statement_end_date)}</dd>
         <dt>Duplicate status</dt><dd>${escapeHtml(transaction.duplicate_confidence)}</dd>
-        <dt>Fingerprint</dt><dd class="mono">${escapeHtml(transaction.transaction_fingerprint)}</dd>
-        <dt>Created</dt><dd>${formatDateTime(transaction.created_at)}</dd>
       </dl>
+      <details class="technical-details">
+        <summary>Technical details</summary>
+        <dl>
+          <dt>Fingerprint</dt><dd class="mono">${escapeHtml(transaction.transaction_fingerprint)}</dd>
+          <dt>Created</dt><dd>${formatDateTime(transaction.created_at)}</dd>
+        </dl>
+      </details>
     </aside>
   `;
 }
@@ -661,6 +728,74 @@ function renderSummaryTable(summary) {
       </table>
     </div>
   `;
+}
+
+function sourceImportLabel(item) {
+  return [
+    item.original_filename,
+    item.account_id || "Account not detected",
+    `${formatDate(item.statement_start_date)} to ${formatDate(item.statement_end_date)}`,
+  ].join(" | ");
+}
+
+function scopedSourceImportOptions(filters, imports) {
+  const accountId = (filters.accountId || "").trim().toLowerCase();
+  const sourceQuery = (filters.sourceImportQuery || "").trim().toLowerCase();
+  return imports
+    .filter((item) => item.transactions_imported > 0)
+    .filter((item) => !filters.bankName || item.bank_name === filters.bankName)
+    .filter((item) => !accountId || (item.account_id || "").toLowerCase().includes(accountId))
+    .filter((item) => {
+      if (!sourceQuery) {
+        return true;
+      }
+      return sourceImportLabel(item).toLowerCase().includes(sourceQuery);
+    });
+}
+
+function sourceImportDisplayLabel(filters, imports) {
+  if (filters.sourceFileId) {
+    const selectedImport = imports.find((item) => item.file_id === filters.sourceFileId);
+    if (selectedImport) {
+      return sourceImportLabel(selectedImport);
+    }
+  }
+  return filters.sourceImportQuery || "";
+}
+
+export function resolveSourceImportSelection(filters, imports) {
+  const query = (filters.sourceImportQuery || "").trim();
+  if (!query) {
+    return {
+      sourceFileId: "",
+      sourceImportQuery: "",
+    };
+  }
+
+  const options = scopedSourceImportOptions(filters, imports);
+  const exactMatches = options.filter(
+    (item) => sourceImportLabel(item) === query,
+  );
+  if (exactMatches.length === 1) {
+    return {
+      sourceFileId: exactMatches[0].file_id,
+      sourceImportQuery: sourceImportLabel(exactMatches[0]),
+    };
+  }
+
+  const fuzzyMatches = options.filter((item) =>
+    sourceImportLabel(item).toLowerCase().includes(query.toLowerCase()),
+  );
+  if (fuzzyMatches.length === 1) {
+    return {
+      sourceFileId: fuzzyMatches[0].file_id,
+      sourceImportQuery: sourceImportLabel(fuzzyMatches[0]),
+    };
+  }
+  if (!fuzzyMatches.length) {
+    throw new Error("Choose a source import from the suggested list or clear the field.");
+  }
+  throw new Error("Source import selection is ambiguous. Narrow the bank or account filters first.");
 }
 
 function filterImports(imports, filters) {

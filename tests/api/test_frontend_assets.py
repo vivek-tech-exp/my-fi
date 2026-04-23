@@ -30,6 +30,7 @@ def test_components_cover_empty_warning_failed_and_long_row_rendering() -> None:
     components = (STATIC_DIR / "components.js").read_text()
 
     assert "No imports match the current filters." in components
+    assert "Selected import is hidden by the current filters." in components
     assert "Review warnings" in components
     assert "fail-card" in components
     assert "repairStatusLabel" in components
@@ -39,3 +40,5 @@ def test_components_cover_empty_warning_failed_and_long_row_rendering() -> None:
     assert "details><summary" in components
     assert "Needs action" in components
     assert "Transaction detail" in components
+    assert "Open source import" in components
+    assert "sourceImportQuery" in components

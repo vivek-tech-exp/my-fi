@@ -17,6 +17,15 @@ class RawRowType(StrEnum):
     SUSPICIOUS = "suspicious"
 
 
+class RawRowRepairStatus(StrEnum):
+    """User-facing repair outcome for a raw row."""
+
+    NOT_REQUIRED = "not_required"
+    REPAIRED = "repaired"
+    NOT_REPAIRABLE = "not_repairable"
+    NOT_ATTEMPTED = "not_attempted"
+
+
 class RawRowRecord(BaseModel):
     """Persisted audit record for a single inspected row."""
 
@@ -32,6 +41,25 @@ class RawRowRecord(BaseModel):
     rejection_reason: str | None = None
     header_row: bool = False
     repaired_row: bool = False
+    repair_status: RawRowRepairStatus = RawRowRepairStatus.NOT_REQUIRED
+
+    def model_post_init(self, __context: object) -> None:
+        """Derive the user-facing repair outcome after validation."""
+
+        del __context
+        self.repair_status = self._derive_repair_status()
+
+    def _derive_repair_status(self) -> RawRowRepairStatus:
+        if self.repaired_row:
+            return RawRowRepairStatus.REPAIRED
+
+        if self.row_type != RawRowType.SUSPICIOUS:
+            return RawRowRepairStatus.NOT_REQUIRED
+
+        if self.rejection_reason in {"column_count_mismatch", "invalid_amount_shape"}:
+            return RawRowRepairStatus.NOT_REPAIRABLE
+
+        return RawRowRepairStatus.NOT_ATTEMPTED
 
 
 class RawRowAuditSummary(BaseModel):

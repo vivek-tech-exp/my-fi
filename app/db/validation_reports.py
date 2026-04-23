@@ -25,6 +25,7 @@ SELECT
     reconciliation_status,
     ledger_continuity_status,
     final_status,
+    issues,
     messages,
     generated_at
 FROM validation_reports
@@ -80,10 +81,11 @@ def _upsert_validation_report(
             reconciliation_status,
             ledger_continuity_status,
             final_status,
+            issues,
             messages,
             generated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             str(report.report_id),
@@ -97,6 +99,7 @@ def _upsert_validation_report(
             report.reconciliation_status.value,
             report.ledger_continuity_status.value,
             report.final_status,
+            json.dumps([issue.model_dump(mode="json") for issue in report.issues]),
             json.dumps(report.messages),
             _as_utc_naive(report.generated_at),
         ],
@@ -129,8 +132,9 @@ def _fetch_validation_report_by_file_id(
             "reconciliation_status": cast(str, row[8]),
             "ledger_continuity_status": cast(str, row[9]),
             "final_status": cast(str, row[10]),
-            "messages": json.loads(cast(str, row[11])),
-            "generated_at": _with_utc_timezone(cast(datetime, row[12])),
+            "issues": json.loads(cast(str, row[11])),
+            "messages": json.loads(cast(str, row[12])),
+            "generated_at": _with_utc_timezone(cast(datetime, row[13])),
         }
     )
 

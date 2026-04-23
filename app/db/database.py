@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from threading import RLock
 
 import duckdb
 
@@ -93,9 +94,15 @@ CREATE TABLE IF NOT EXISTS validation_reports (
     reconciliation_status VARCHAR NOT NULL,
     ledger_continuity_status VARCHAR NOT NULL,
     final_status VARCHAR NOT NULL,
+    issues VARCHAR NOT NULL DEFAULT '[]',
     messages VARCHAR NOT NULL,
     generated_at TIMESTAMP NOT NULL
 );
+"""
+
+VALIDATION_REPORTS_ISSUES_COLUMN_SQL = """
+ALTER TABLE validation_reports
+ADD COLUMN IF NOT EXISTS issues VARCHAR DEFAULT '[]';
 """
 
 VALIDATION_REPORTS_FILE_ID_INDEX_SQL = """
@@ -103,17 +110,20 @@ CREATE INDEX IF NOT EXISTS validation_reports_file_id_idx
 ON validation_reports(file_id, generated_at);
 """
 
+_DATABASE_LOCK = RLock()
+
 
 @contextmanager
 def database_connection() -> Iterator[duckdb.DuckDBPyConnection]:
     """Yield a connection to the configured DuckDB database."""
 
     settings = get_settings()
-    connection = duckdb.connect(str(settings.database_path))
-    try:
-        yield connection
-    finally:
-        connection.close()
+    with _DATABASE_LOCK:
+        connection = duckdb.connect(str(settings.database_path))
+        try:
+            yield connection
+        finally:
+            connection.close()
 
 
 def initialize_database() -> None:
@@ -127,4 +137,5 @@ def initialize_database() -> None:
         connection.execute(CANONICAL_TRANSACTIONS_TABLE_SQL)
         connection.execute(CANONICAL_TRANSACTIONS_FILE_ID_INDEX_SQL)
         connection.execute(VALIDATION_REPORTS_TABLE_SQL)
+        connection.execute(VALIDATION_REPORTS_ISSUES_COLUMN_SQL)
         connection.execute(VALIDATION_REPORTS_FILE_ID_INDEX_SQL)

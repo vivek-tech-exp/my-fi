@@ -103,7 +103,13 @@ async def upload_csv_batch(
     summary="List import metadata",
 )
 def list_imports() -> list[ImportSummaryResponse]:
-    return [ImportSummaryResponse.from_source_file_record(record) for record in list_source_files()]
+    return [
+        ImportSummaryResponse.from_source_file_record(
+            record,
+            report=get_validation_report_by_file_id(record.file_id),
+        )
+        for record in list_source_files()
+    ]
 
 
 @router.get(

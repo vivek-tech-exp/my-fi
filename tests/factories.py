@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from app.models.imports import BankName, ImportStatus, SourceFileRecord
-from app.models.ledger import CanonicalTransactionRecord, TransactionDirection
+from app.models.ledger import CanonicalTransactionRecord, DuplicateConfidence, TransactionDirection
 from app.models.parsing import RawRowRecord, RawRowType
 from app.models.validation import ValidationCheckStatus, ValidationReportRecord
 
@@ -73,6 +73,7 @@ def canonical_transaction(
     source_row_number: int = 1,
     reference_number: str | None = "REF-1",
     fingerprint: str = "a" * 64,
+    duplicate_confidence: DuplicateConfidence = DuplicateConfidence.UNIQUE,
     created_at: datetime | None = None,
 ) -> CanonicalTransactionRecord:
     return CanonicalTransactionRecord(
@@ -91,6 +92,7 @@ def canonical_transaction(
         source_row_number=source_row_number,
         reference_number=reference_number,
         transaction_fingerprint=fingerprint,
+        duplicate_confidence=duplicate_confidence,
         created_at=created_at or datetime(2026, 4, 1, tzinfo=UTC),
     )
 

@@ -62,15 +62,26 @@ export async function reprocessImport(fileId) {
 
 export async function listTransactions(filters) {
   const params = new URLSearchParams();
+  const limit = Number(filters.limit || 100);
+  const offset = Number(filters.offset || 0);
   appendOptionalParam(params, "bank_name", filters.bankName);
   appendOptionalParam(params, "account_id", filters.accountId);
   appendOptionalParam(params, "direction", filters.direction);
   appendOptionalParam(params, "transaction_date_from", filters.dateFrom);
   appendOptionalParam(params, "transaction_date_to", filters.dateTo);
-  appendOptionalParam(params, "limit", filters.limit || 100);
-  appendOptionalParam(params, "offset", filters.offset || 0);
+  appendOptionalParam(params, "limit", Math.min(limit + 1, 1000));
+  appendOptionalParam(params, "offset", offset);
 
-  return requestJson(`/transactions?${params.toString()}`);
+  const rows = await requestJson(`/transactions?${params.toString()}`);
+  return {
+    rows: rows.slice(0, limit),
+    page: {
+      limit,
+      offset,
+      hasNext: rows.length > limit,
+      hasPrevious: offset > 0,
+    },
+  };
 }
 
 export async function getTransactionSummary(filters) {

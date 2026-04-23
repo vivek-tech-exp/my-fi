@@ -4,7 +4,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from app.models.imports import BankName
-from app.models.parsing import RawRowRecord, RawRowType
+from app.models.parsing import RawRowRecord, RawRowRepairStatus, RawRowType
 from app.parsers import get_bank_parser
 from app.parsers.base import BaseCsvParser, RowRepairOutcome
 
@@ -92,6 +92,7 @@ def test_hdfc_parser_detects_official_amount_header_shape() -> None:
     assert inspection_result.ignored_rows_recorded == 2
     assert inspection_result.suspicious_rows_recorded == 0
     assert inspection_result.transactions_imported == 3
+    assert inspection_result.raw_rows[0].repair_status == RawRowRepairStatus.NOT_REQUIRED
     credit_transaction = inspection_result.canonical_transactions[0]
     debit_transaction = inspection_result.canonical_transactions[1]
     reversal_transaction = inspection_result.canonical_transactions[2]
@@ -275,6 +276,7 @@ def test_hdfc_parser_classifies_invalid_rows_and_maps_debits_with_reference_numb
     accepted_transactions = inspection_result.canonical_transactions
 
     assert inspection_result.suspicious_rows_recorded == 5
+    assert inspection_result.raw_rows[0].repair_status == RawRowRepairStatus.NOT_ATTEMPTED
     assert accepted_transactions[0].direction == "DEBIT"
     assert accepted_transactions[0].amount == Decimal("120.50")
     assert accepted_transactions[0].reference_number == "REF-1"
@@ -410,7 +412,9 @@ def test_hdfc_parser_repairs_split_narration_when_amount_shape_is_valid() -> Non
     assert inspection_result.suspicious_rows_recorded == 1
     assert inspection_result.canonical_transactions[0].description_raw == "POS PURCHASE,COFFEE SHOP"
     assert inspection_result.raw_rows[1].repaired_row is True
+    assert inspection_result.raw_rows[1].repair_status == RawRowRepairStatus.REPAIRED
     assert inspection_result.raw_rows[2].rejection_reason == "column_count_mismatch"
+    assert inspection_result.raw_rows[2].repair_status == RawRowRepairStatus.NOT_REPAIRABLE
     assert not hasattr(parser, "_header_columns")
 
 

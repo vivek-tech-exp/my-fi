@@ -9,6 +9,9 @@ export const state = {
   selectedRows: [],
   uploadResult: null,
   transactions: [],
+  transactionPage: {
+    hasNext: false,
+  },
   summary: [],
   transactionFilters: {
     bankName: "",

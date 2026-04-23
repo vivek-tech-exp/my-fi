@@ -1,9 +1,53 @@
-const statusLabels = {
-  PASS: "pass",
-  PASS_WITH_WARNINGS: "warning",
-  FAIL_NEEDS_REVIEW: "fail",
-  RECEIVED: "neutral",
-  PROCESSING: "neutral",
+const statusMeta = {
+  PASS: {
+    label: "Ready",
+    tone: "pass",
+    help: "Parsed and validated without blocking issues.",
+  },
+  PASS_WITH_WARNINGS: {
+    label: "Review warnings",
+    tone: "warning",
+    help: "Imported, but warnings should be checked.",
+  },
+  FAIL_NEEDS_REVIEW: {
+    label: "Needs review",
+    tone: "fail",
+    help: "Not trusted yet. Review messages and rows.",
+  },
+  RECEIVED: {
+    label: "Received",
+    tone: "neutral",
+    help: "Stored but not fully processed.",
+  },
+  PROCESSING: {
+    label: "Processing",
+    tone: "neutral",
+    help: "Import is still running.",
+  },
+};
+
+const rowTypeLabels = {
+  accepted: "Imported",
+  ignored: "Skipped",
+  suspicious: "Needs review",
+};
+
+const repairStatusLabels = {
+  not_required: "Not needed",
+  repaired: "Repaired",
+  not_repairable: "Could not repair",
+  not_attempted: "Not attempted",
+};
+
+const reasonLabels = {
+  blank_row: "Blank row",
+  header_row: "Header row",
+  repeated_header_row: "Repeated header",
+  content_before_header: "Before header",
+  column_count_mismatch: "Column mismatch",
+  invalid_transaction_date: "Invalid date",
+  missing_description: "Missing description",
+  invalid_amount_shape: "Invalid amount",
 };
 
 export function escapeHtml(value) {
@@ -30,8 +74,24 @@ export function formatMoney(value) {
 }
 
 export function statusPill(status) {
-  const tone = statusLabels[status] || "neutral";
-  return `<span class="status-pill ${tone}">${escapeHtml(status || "-")}</span>`;
+  const meta = statusMeta[status] || { label: status || "-", tone: "neutral", help: status || "" };
+  return `<span class="status-pill ${meta.tone}" title="${escapeHtml(meta.help)}">${escapeHtml(meta.label)}</span>`;
+}
+
+function statusHelp(status) {
+  return statusMeta[status]?.help || "";
+}
+
+function rowTypeLabel(type) {
+  return rowTypeLabels[type] || type || "-";
+}
+
+function repairStatusLabel(row) {
+  return repairStatusLabels[row.repair_status] || (row.repaired_row ? "Repaired" : "Unknown");
+}
+
+function reasonLabel(reason) {
+  return reasonLabels[reason] || reason || "-";
 }
 
 export function emptyState(message) {
@@ -185,6 +245,7 @@ function renderImportDetail({ selectedImport, selectedReport, selectedRows, rowF
     </div>
     <div class="metric-strip">
       <span>${statusPill(selectedImport.status)}</span>
+      <span>${escapeHtml(statusHelp(selectedImport.status))}</span>
       <span>${report?.transactions_imported ?? 0} transactions</span>
       <span>${report?.suspicious_rows ?? 0} suspicious</span>
       <span>${report?.duplicate_rows ?? 0} duplicates</span>
@@ -221,9 +282,9 @@ function renderRowsTable(rows, rowFilter) {
         <thead>
           <tr>
             <th>#</th>
-            <th>Type</th>
+            <th>Outcome</th>
             <th>Reason</th>
-            <th>Repaired</th>
+            <th>Repair status</th>
             <th>Raw text</th>
           </tr>
         </thead>
@@ -233,9 +294,9 @@ function renderRowsTable(rows, rowFilter) {
               (row) => `
                 <tr>
                   <td>${row.row_number}</td>
-                  <td>${escapeHtml(row.row_type)}</td>
-                  <td>${escapeHtml(row.rejection_reason || "-")}</td>
-                  <td>${row.repaired_row ? "yes" : "no"}</td>
+                  <td>${escapeHtml(rowTypeLabel(row.row_type))}</td>
+                  <td>${escapeHtml(reasonLabel(row.rejection_reason))}</td>
+                  <td>${escapeHtml(repairStatusLabel(row))}</td>
                   <td><details><summary>${escapeHtml(rawRowPreview(row))}</summary><pre>${escapeHtml(rawRowText(row))}</pre></details></td>
                 </tr>
               `,
@@ -256,13 +317,16 @@ function rawRowPreview(row) {
   return text.length > 90 ? `${text.slice(0, 90)}...` : text;
 }
 
-export function renderTransactionsView({ filters, transactions }) {
+export function renderTransactionsView({ filters, transactions, page }) {
   return `
     <section class="panel">
       ${renderLedgerFilters("transactions-filter", filters)}
     </section>
     <section class="panel">
-      <div class="section-heading"><h2>Transactions</h2></div>
+      <div class="section-heading">
+        <h2>Transactions</h2>
+        ${renderPagination(page, transactions.length)}
+      </div>
       ${renderTransactionsTable(transactions)}
     </section>
   `;
@@ -305,6 +369,19 @@ function renderLedgerFilters(formId, filters) {
       <label><span>To</span><input type="date" name="dateTo" value="${escapeHtml(filters.dateTo)}" /></label>
       <button class="primary-action" type="submit">Apply</button>
     </form>
+  `;
+}
+
+function renderPagination(page, visibleCount) {
+  const safePage = page || { limit: 100, offset: 0, hasPrevious: false, hasNext: false };
+  const start = visibleCount ? safePage.offset + 1 : 0;
+  const end = safePage.offset + visibleCount;
+  return `
+    <div class="pager" aria-label="Transaction pagination">
+      <span>Showing ${start}-${end}</span>
+      <button id="transactions-prev" class="secondary-action" type="button" ${safePage.hasPrevious ? "" : "disabled"}>Previous</button>
+      <button id="transactions-next" class="secondary-action" type="button" ${safePage.hasNext ? "" : "disabled"}>Next</button>
+    </div>
   `;
 }
 

@@ -64,8 +64,10 @@ function render() {
     viewRoot.innerHTML = renderTransactionsView({
       filters: state.transactionFilters,
       transactions: state.transactions,
+      page: state.transactionPage,
     });
     bindLedgerFilter("transactions-filter", refreshTransactions);
+    bindTransactionPager();
     return;
   }
 
@@ -157,6 +159,23 @@ function bindLedgerFilter(formId, refreshCallback) {
   });
 }
 
+function bindTransactionPager() {
+  document.querySelector("#transactions-prev")?.addEventListener("click", async () => {
+    const limit = Number(state.transactionFilters.limit || 100);
+    setTransactionFilters({
+      offset: Math.max(Number(state.transactionFilters.offset || 0) - limit, 0),
+    });
+    await refreshTransactions();
+  });
+  document.querySelector("#transactions-next")?.addEventListener("click", async () => {
+    const limit = Number(state.transactionFilters.limit || 100);
+    setTransactionFilters({
+      offset: Number(state.transactionFilters.offset || 0) + limit,
+    });
+    await refreshTransactions();
+  });
+}
+
 async function loadViewData(view) {
   if (view === "imports") {
     await refreshImports();
@@ -225,10 +244,13 @@ async function refreshTransactions({ silent = false } = {}) {
     if (!silent) {
       setStatus("Loading transactions...");
     }
-    const transactions = await listTransactions(state.transactionFilters);
-    setState({ transactions });
+    const transactionResult = await listTransactions(state.transactionFilters);
+    setState({
+      transactions: transactionResult.rows,
+      transactionPage: transactionResult.page,
+    });
     if (!silent) {
-      setStatus(`Loaded ${transactions.length} transaction(s).`);
+      setStatus(`Loaded ${transactionResult.rows.length} transaction(s).`);
     }
     if (state.activeView === "transactions") {
       render();

@@ -599,7 +599,9 @@ def test_import_inspection_endpoints_return_reports_and_rows(
     rows_payload = rows_response.json()
     assert len(rows_payload) == 6
     assert rows_payload[2]["header_row"] is True
+    assert rows_payload[2]["repair_status"] == "not_required"
     assert rows_payload[3]["row_type"] == "accepted"
+    assert rows_payload[3]["repair_status"] == "not_required"
 
     reprocess_response = client.post(f"/imports/{file_id}/reprocess")
 

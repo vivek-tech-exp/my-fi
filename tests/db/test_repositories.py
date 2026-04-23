@@ -1,7 +1,9 @@
 """Repository tests for DuckDB persistence helpers."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from decimal import Decimal
+from time import sleep
 from uuid import uuid4
 
 import pytest
@@ -27,6 +29,20 @@ def _initialize_storage() -> None:
     settings = get_settings()
     ensure_directories(settings.required_directories)
     initialize_database()
+
+
+def test_database_connection_serializes_concurrent_local_access() -> None:
+    _initialize_storage()
+
+    def read_source_file_count() -> int:
+        with database_connection() as connection:
+            sleep(0.01)
+            return int(connection.execute("SELECT COUNT(*) FROM source_files").fetchone()[0])
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        counts = list(executor.map(lambda _: read_source_file_count(), range(3)))
+
+    assert counts == [0, 0, 0]
 
 
 def test_source_file_repository_round_trips_and_updates_records() -> None:

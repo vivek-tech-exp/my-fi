@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from threading import RLock
 
 import duckdb
 
@@ -103,17 +104,20 @@ CREATE INDEX IF NOT EXISTS validation_reports_file_id_idx
 ON validation_reports(file_id, generated_at);
 """
 
+_DATABASE_LOCK = RLock()
+
 
 @contextmanager
 def database_connection() -> Iterator[duckdb.DuckDBPyConnection]:
     """Yield a connection to the configured DuckDB database."""
 
     settings = get_settings()
-    connection = duckdb.connect(str(settings.database_path))
-    try:
-        yield connection
-    finally:
-        connection.close()
+    with _DATABASE_LOCK:
+        connection = duckdb.connect(str(settings.database_path))
+        try:
+            yield connection
+        finally:
+            connection.close()
 
 
 def initialize_database() -> None:

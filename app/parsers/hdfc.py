@@ -141,11 +141,15 @@ class HdfcCsvParser(BaseCsvParser):
             return None
 
         if debit_amount is not None:
-            amount = debit_amount
-            direction = TransactionDirection.DEBIT
+            amount = abs(debit_amount)
+            direction = (
+                TransactionDirection.CREDIT if debit_amount < 0 else TransactionDirection.DEBIT
+            )
         elif credit_amount is not None:
-            amount = credit_amount
-            direction = TransactionDirection.CREDIT
+            amount = abs(credit_amount)
+            direction = (
+                TransactionDirection.DEBIT if credit_amount < 0 else TransactionDirection.CREDIT
+            )
         else:
             return None
 

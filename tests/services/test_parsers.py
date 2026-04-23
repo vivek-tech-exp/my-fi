@@ -78,19 +78,23 @@ def test_hdfc_parser_detects_official_amount_header_shape() -> None:
             " 03/04/26  ,IB BILLPAY DR-HDFCPE-1708,03/04/26 ,"
             "       20523.76     ,           0.00     ,1775236200366091       ,"
             "       58423.54  \n"
+            " 04/04/26  ,NWD REVERSAL,04/04/26 ,"
+            "       -2000.00     ,           0.00     ,0000216707026824       ,"
+            "       60423.54  \n"
         ),
         delimiter=",",
         account_id="primary",
     )
 
     assert inspection_result.header_detected is True
-    assert inspection_result.raw_rows_recorded == 4
-    assert inspection_result.accepted_rows_recorded == 2
+    assert inspection_result.raw_rows_recorded == 5
+    assert inspection_result.accepted_rows_recorded == 3
     assert inspection_result.ignored_rows_recorded == 2
     assert inspection_result.suspicious_rows_recorded == 0
-    assert inspection_result.transactions_imported == 2
+    assert inspection_result.transactions_imported == 3
     credit_transaction = inspection_result.canonical_transactions[0]
     debit_transaction = inspection_result.canonical_transactions[1]
+    reversal_transaction = inspection_result.canonical_transactions[2]
     assert credit_transaction.direction == "CREDIT"
     assert credit_transaction.amount == Decimal("135298.07")
     assert credit_transaction.value_date is not None
@@ -98,6 +102,8 @@ def test_hdfc_parser_detects_official_amount_header_shape() -> None:
     assert credit_transaction.reference_number == "AXNPN09204426074"
     assert debit_transaction.direction == "DEBIT"
     assert debit_transaction.amount == Decimal("20523.76")
+    assert reversal_transaction.direction == "CREDIT"
+    assert reversal_transaction.amount == Decimal("2000.00")
 
 
 def test_kotak_parser_extracts_statement_dates_and_canonical_transactions() -> None:

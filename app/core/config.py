@@ -8,6 +8,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_HOME = Path.home() / ".my-fi"
 
 
 class Settings(BaseSettings):
@@ -24,13 +25,13 @@ class Settings(BaseSettings):
     environment: Literal["local", "development", "test", "production"] = "local"
     api_host: str = "127.0.0.1"
     api_port: int = 8000
-    data_dir: Path = Field(default=PROJECT_ROOT / "data")
-    uploads_dir: Path = Field(default=PROJECT_ROOT / "data" / "uploads")
-    quarantine_dir: Path = Field(default=PROJECT_ROOT / "data" / "quarantine")
-    storage_dir: Path = Field(default=PROJECT_ROOT / "storage")
-    logs_dir: Path = Field(default=PROJECT_ROOT / "storage" / "logs")
-    upload_staging_dir: Path = Field(default=PROJECT_ROOT / "storage" / "upload-staging")
-    database_path: Path = Field(default=PROJECT_ROOT / "storage" / "my_fi.duckdb")
+    data_dir: Path = Field(default=DATA_HOME / "data")
+    uploads_dir: Path = Field(default=DATA_HOME / "data" / "uploads")
+    quarantine_dir: Path = Field(default=DATA_HOME / "data" / "quarantine")
+    storage_dir: Path = Field(default=DATA_HOME / "storage")
+    logs_dir: Path = Field(default=DATA_HOME / "storage" / "logs")
+    upload_staging_dir: Path = Field(default=DATA_HOME / "storage" / "upload-staging")
+    database_path: Path = Field(default=DATA_HOME / "storage" / "my_fi.duckdb")
     test_fixtures_dir: Path = Field(default=PROJECT_ROOT / "tests" / "fixtures")
     default_parser_version: str = "v1"
     upload_chunk_size_bytes: int = 1024 * 1024

@@ -1,276 +1,125 @@
 # my-fi
 
-Local-first personal banking ingestion engine for importing multi-bank CSV exports into a trusted canonical ledger.
+**Your money, your machine, your data.**
 
-## Current Docs
+A local-first personal banking tool that imports your bank CSV exports into a clean, searchable ledger — entirely on your computer. No cloud. No accounts. No data leaves your machine.
 
-* Product requirements: [docs/PRD_version_1.md](docs/PRD_version_1.md)
-* Implementation roadmap: [docs/implementation_plan_v1.md](docs/implementation_plan_v1.md)
-* Engineering standards: [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md)
-
-## Working Model
-
-This repository is being built in small vertical slices.
-
-* planning and baseline standards can land directly on `master`
-* feature development should happen on short-lived branches
-* changes should merge back to `master` through pull requests
-
-The current completed milestone on `master` is `P11: HDFC and Federal parser support`,
-plus canonical transaction query APIs and multi-file upload support.
-
-## Project Overview
-
-V1 is intentionally backend-first.
-
-The service will:
-
-* accept bank CSV uploads through a FastAPI API
-* store source files locally
-* normalize and parse bank-specific CSV formats
-* build a canonical transaction ledger
-* validate imports before they are trusted
-
-The current branch-by-branch roadmap starts with the FastAPI foundation and then layers in uploads, persistence, parsing, and validation.
-
-## Tech Stack
-
-* Python
-* FastAPI
-* DuckDB
-* `uv` for dependency management and local execution
-* Pydantic and `pydantic-settings`
-* `pytest`, `ruff`, and `mypy` for quality checks
-
-DuckDB now backs the source file registry, raw-row audit trail, canonical transaction ledger, and validation reports.
-
-## Project Layout
-
-```text
-app/
-  api/
-  core/
-  db/
-  models/
-  parsers/
-  services/
-data/
-  uploads/
-  quarantine/
-docs/
-storage/
-tests/
-  fixtures/
-```
-
-## Local Setup
-
-### Prerequisites
-
-* Python 3.12 or newer
-* `uv`
-
-Install `uv` if needed:
+## ⚡ Quickstart
 
 ```bash
-brew install uv
+# 1. Clone the repo
+git clone https://github.com/vivek-tech-exp/my-fi.git
+cd my-fi
+
+# 2. Run setup (installs everything automatically)
+./setup.sh
+
+# 3. Start the app
+make run
 ```
 
-### Install dependencies
+Then open **http://127.0.0.1:8000/ui** in your browser. That's it.
+
+> **First time?** The setup script checks for Python 3.12+ and `uv`, installs them if needed, and sets up all dependencies. You don't need to install anything manually.
+
+## 📂 Supported Banks
+
+| Bank | CSV Format | Sample File |
+|---|---|---|
+| HDFC | Debit/Credit statement export | `samples/hdfc_sample.csv` |
+| Kotak | Full statement with preamble | `samples/kotak_sample.csv` |
+| Federal | Standard statement export | `samples/federal_sample.csv` |
+
+More banks can be added — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## 🧪 Try It Out
+
+After running `make run`:
+
+1. Open **http://127.0.0.1:8000/ui** in your browser
+2. Select a bank (e.g., `hdfc`)
+3. Upload the sample file from `samples/hdfc_sample.csv`
+4. See your transactions parsed and displayed instantly
+
+The sample CSVs contain **completely synthetic data** — fake transactions, fake amounts. They exist so you can test the full flow immediately.
+
+## 🔧 Everyday Commands
 
 ```bash
-uv sync --dev
+make run          # Start the app
+make test         # Run the test suite
+make lint         # Check code quality (ruff + mypy)
+make clean        # Wipe all data (fresh start)
+make clean-cache  # Clear tool caches (mypy, ruff, pytest)
+make help         # Show all available commands
 ```
 
-### Optional environment file
+## 📁 Where Is My Data?
 
-```bash
-cp .env.example .env
+All your data lives in **`~/.my-fi/`** on your machine:
+
+```
+~/.my-fi/
+├── data/
+│   ├── uploads/          ← your uploaded bank CSVs
+│   └── quarantine/       ← files that couldn't be read
+├── storage/
+│   ├── my_fi.duckdb      ← your local database
+│   ├── logs/             ← import diagnostic logs
+│   └── upload-staging/   ← temporary upload chunks
 ```
 
-The defaults are already suitable for local development, so `.env` is optional.
+- **Your data never leaves your computer.** There is no cloud, no telemetry, no external calls.
+- **Data is separate from code.** You can update or re-clone the repo without losing anything.
+- **Want data inside the repo instead?** Set `MY_FI_DATA_DIR=./data` in your `.env` file.
 
-## Run the API
+## 🧱 How It Works
 
-Start the local FastAPI server:
-
-```bash
-uv run uvicorn app.main:app --reload
+```
+Bank CSV → Upload API → Parser → Canonical Ledger → Local UI
+                                      ↓
+                              DuckDB (on disk)
 ```
 
-Then open:
+- **FastAPI** serves the API and a lightweight browser UI
+- **Bank-specific parsers** normalize different CSV formats into a canonical schema
+- **DuckDB** stores everything locally — no database server needed
+- **Validation** checks every import for duplicates, balance mismatches, and suspicious rows
 
-* Local UI: `http://127.0.0.1:8000/ui`
-* Swagger UI: `http://127.0.0.1:8000/docs`
-* OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
-* Health check: `http://127.0.0.1:8000/health`
+## 🖥 What You Can Do
 
-The local UI is a lightweight static browser client served by FastAPI. It calls the same API
-endpoints used by Swagger UI; it does not query DuckDB directly or embed backend service logic.
+- Upload CSV files (single or batch) for any supported bank
+- Browse your transaction history with filters (bank, account, date range, direction)
+- View monthly summaries
+- Inspect import reports and raw-row audit trails
+- Reprocess a stored import anytime
 
-## Current API Surface
+<details>
+<summary><strong>📋 Full API Reference</strong></summary>
 
-Available now:
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/` | Root |
+| `GET` | `/health` | Health check |
+| `GET` | `/ui` | Browser-based local console |
+| `POST` | `/imports/csv` | Upload a single CSV |
+| `POST` | `/imports/csv/batch` | Upload multiple CSVs |
+| `GET` | `/imports` | List all imports |
+| `GET` | `/imports/{file_id}` | Import details + validation report |
+| `GET` | `/imports/{file_id}/report` | Validation report only |
+| `GET` | `/imports/{file_id}/rows` | Raw-row audit trail |
+| `POST` | `/imports/{file_id}/reprocess` | Re-run parser + validation |
+| `GET` | `/transactions` | Query canonical ledger |
+| `GET` | `/transactions/summary` | Monthly aggregates |
 
-* `GET /`
-* `GET /health`
-* `GET /ui`
-* `POST /imports/csv`
-* `POST /imports/csv/batch`
-* `GET /imports`
-* `GET /imports/{file_id}`
-* `GET /imports/{file_id}/report`
-* `GET /imports/{file_id}/rows`
-* `POST /imports/{file_id}/reprocess`
-* `GET /transactions`
-* `GET /transactions/summary`
+Interactive API docs available at `http://127.0.0.1:8000/docs` when the server is running.
 
-The single-file upload endpoint accepts:
+</details>
 
-* multipart `file`
-* `bank_name`
+## 🤝 Contributing
 
-The batch upload endpoint accepts:
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines.
 
-* repeated multipart `files`
-* `bank_name`
+## 📄 License
 
-`account_id` is no longer accepted during upload. The service auto-generates it from the
-bank and detected statement period after parsing.
-
-Current supported bank names:
-
-* `hdfc`
-* `kotak`
-* `federal`
-
-At this stage, upload endpoints stream incoming files into an ignored staging directory,
-compute each SHA-256 hash from the streamed bytes, enforce a per-file size limit, store the
-original file locally, persist a `source_files` registry row in DuckDB, run the bank parser,
-validate the import, and return structured metadata.
-
-Default upload safety settings:
-
-* staging directory: `storage/upload-staging`
-* diagnostic log file: `storage/logs/imports.log`
-* upload chunk size: `MY_FI_UPLOAD_CHUNK_SIZE_BYTES`, default `1048576`
-* max file size: `MY_FI_MAX_UPLOAD_FILE_SIZE_BYTES`, default `262144000`
-
-Re-uploading the same file content is idempotent:
-
-* the existing import metadata is returned
-* no second registry row is created
-* no second stored file is written
-
-Uploads now also run through pre-parse normalization before later parser work:
-
-* file encoding is detected when possible
-* UTF-8 BOM is stripped during normalization
-* line endings are normalized to `\n`
-* CSV delimiter is detected when possible
-* unreadable files are quarantined and marked `FAIL_NEEDS_REVIEW`
-
-Each readable upload now also leaves a raw-row audit trail:
-
-* the parser is selected per bank
-* header rows are detected and marked as ignored audit rows
-* data rows are classified as `accepted`, `ignored`, or `suspicious`
-* every inspected row is persisted in the `raw_rows` DuckDB table
-* raw row payloads, parser name, parser version, and rejection reasons are preserved for later debugging
-
-Supported bank uploads now write accepted transaction rows into the canonical ledger:
-
-* bank-specific parsers remain isolated for HDFC, Kotak, and Federal
-* account metadata preambles and footer rows are ignored safely where applicable
-* statement start and end dates are extracted when present
-* debit and credit values are normalized into explicit `amount` and `direction`
-* accepted rows are written to the `canonical_transactions` DuckDB table
-* every canonical transaction keeps source-file and source-row traceability
-
-Canonical transaction inserts now run duplicate protection before ledger writes:
-
-* exact duplicates with balances are skipped
-* no-balance fallback duplicates are skipped as probable duplicates
-* ambiguous same-account/date/amount candidates are inserted with warning metadata
-* upload responses include duplicate and ambiguity counters
-
-Every completed import now gets a validation report:
-
-* row counts are reconciled against parser output
-* suspicious rows and duplicate rows are surfaced as warnings
-* running balance continuity mismatches are surfaced as warnings when balance columns exist
-* invalid headers, unreadable files, and empty canonical imports fail review
-* final import status is explicitly set to `PASS`, `PASS_WITH_WARNINGS`, or `FAIL_NEEDS_REVIEW`
-
-Use the inspection APIs from Swagger UI to review imports without querying DuckDB directly:
-
-* `GET /imports` lists import summaries
-* `GET /imports/{file_id}` returns import metadata and the latest validation report
-* `GET /imports/{file_id}/report` returns the validation report
-* `GET /imports/{file_id}/rows` returns the raw-row audit trail
-* `POST /imports/{file_id}/reprocess` re-runs the parser and validation flow from the stored source file
-* `GET /transactions` returns canonical ledger rows with optional filters (bank, account, direction, source file, date range)
-* `GET /transactions/summary?group_by=month` returns monthly canonical ledger aggregates
-
-Use `GET /ui` for the lightweight local console:
-
-* upload multiple CSV files by bank
-* review per-file upload results and import statuses
-* inspect import reports and raw-row audit trails
-* filter canonical transactions by bank, account, direction, and date range
-* review monthly transaction summaries
-* reprocess a stored import and refresh the visible data
-
-Use `POST /imports/csv/batch` from Swagger UI when testing several real CSV files. The
-response reports each file independently, so an empty, oversized, duplicate, or malformed
-file does not hide the result for the rest of the batch.
-
-Import diagnostics are written to `storage/logs/imports.log`. Suspicious and repaired rows
-include the row number, rejection reason, raw row text, normalized text when available, and
-parsed payload. These logs are intentionally stored under ignored runtime storage because
-real bank CSV rows can contain sensitive data.
-
-The registry currently tracks:
-
-* file identity and hash metadata
-* current import lifecycle status
-* parser version
-* duplicate-file detection at the file hash level
-* detected file encoding and delimiter metadata
-* statement dates when the parser can extract them
-* latest validation status
-
-The parser audit trail currently tracks:
-
-* parser name and parser version
-* row number and raw row text
-* parsed row payload
-* header-row detection
-* suspicious-row reasons for pre-header or malformed rows
-
-## Quality Checks
-
-Run the local quality gates before opening a PR:
-
-```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy app
-uv run pytest
-```
-
-## Git Workflow
-
-Development work should follow the branch and PR standards in [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md).
-
-In practice:
-
-* branch from the latest `master`
-* implement one scoped change per branch
-* merge back through a pull request
-
-Example branch names:
-
-* `feature/bootstrap-fastapi-service`
-* `feature/import-upload-api`
-* `feature/hdfc-parser`
+[MIT](LICENSE) — use it however you want.

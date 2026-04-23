@@ -16,6 +16,16 @@ from app.parsers.base import (
 )
 
 HDFC_DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d/%m/%y")
+HDFC_DEBIT_TOKENS = {"debit", "debit amount", "withdrawal", "withdrawal amt"}
+HDFC_CREDIT_TOKENS = {"credit", "credit amount", "deposit", "deposit amt"}
+HDFC_VALUE_DATE_TOKENS = {"value date", "value dat", "value dt"}
+HDFC_REFERENCE_TOKENS = {
+    "chq ref no",
+    "chq ref number",
+    "cheque ref no",
+    "ref no",
+    "reference number",
+}
 
 
 class HdfcCsvParser(BaseCsvParser):
@@ -30,11 +40,7 @@ class HdfcCsvParser(BaseCsvParser):
         has_date = any(token in tokens for token in {"date", "transaction date"})
         has_description = any(token in tokens for token in {"narration", "description"})
         has_balance = any(token in tokens for token in {"balance", "closing balance"})
-        has_amounts = (
-            {"debit", "credit"} <= tokens
-            or {"withdrawal amt", "deposit amt"} <= tokens
-            or {"withdrawal", "deposit"} <= tokens
-        )
+        has_amounts = bool(tokens & HDFC_DEBIT_TOKENS) and bool(tokens & HDFC_CREDIT_TOKENS)
         return has_date and has_description and has_balance and has_amounts
 
     def repair_row(
@@ -45,8 +51,7 @@ class HdfcCsvParser(BaseCsvParser):
         columns: list[str],
         header_columns: list[str] | None,
     ) -> RowRepairOutcome:
-        repaired_columns = self._repair_split_narration_columns(columns, header_columns)
-        if repaired_columns is None:
+        if header_columns is None or self.is_header_row(columns):
             return super().repair_row(
                 row_number=row_number,
                 raw_text=raw_text,
@@ -54,9 +59,21 @@ class HdfcCsvParser(BaseCsvParser):
                 header_columns=header_columns,
             )
 
+        repaired_columns = self._repair_split_narration_columns(columns, header_columns)
+        if repaired_columns is None:
+            normalized_columns = self._normalize_seven_column_order(columns, header_columns)
+            return RowRepairOutcome(
+                row_text=raw_text,
+                columns=normalized_columns or columns,
+                repaired=False,
+            )
+
+        normalized_columns = (
+            self._normalize_seven_column_order(repaired_columns, header_columns) or repaired_columns
+        )
         return RowRepairOutcome(
-            row_text=self._to_csv_line(repaired_columns),
-            columns=repaired_columns,
+            row_text=self._to_csv_line(normalized_columns),
+            columns=normalized_columns,
             repaired=True,
         )
 
@@ -79,20 +96,20 @@ class HdfcCsvParser(BaseCsvParser):
         if base_classification.row_type != RawRowType.ACCEPTED:
             return base_classification
 
-        if self._transaction_date(columns, header_columns=header_columns) is None:
+        if self._transaction_date(columns) is None:
             return RowClassification(
                 row_type=RawRowType.SUSPICIOUS,
                 rejection_reason="invalid_transaction_date",
             )
 
-        if not self._description(columns, header_columns=header_columns):
+        if not self._description(columns):
             return RowClassification(
                 row_type=RawRowType.SUSPICIOUS,
                 rejection_reason="missing_description",
             )
 
-        debit_amount = self._debit_amount(columns, header_columns=header_columns)
-        credit_amount = self._credit_amount(columns, header_columns=header_columns)
+        debit_amount = self._debit_amount(columns)
+        credit_amount = self._credit_amount(columns)
         if debit_amount is None and credit_amount is None:
             return RowClassification(
                 row_type=RawRowType.SUSPICIOUS,
@@ -170,7 +187,7 @@ class HdfcCsvParser(BaseCsvParser):
         return self._parse_date(
             self._column_value(
                 columns,
-                {"value date", "value dt"},
+                HDFC_VALUE_DATE_TOKENS,
                 default_index=3 if len(columns) >= 7 else None,
                 header_columns=header_columns,
             )
@@ -197,7 +214,7 @@ class HdfcCsvParser(BaseCsvParser):
     ) -> str | None:
         reference_number = self._column_value(
             columns,
-            {"chq ref no", "cheque ref no", "ref no", "reference number"},
+            HDFC_REFERENCE_TOKENS,
             default_index=2 if len(columns) >= 7 else None,
             header_columns=header_columns,
         ).strip()
@@ -209,10 +226,10 @@ class HdfcCsvParser(BaseCsvParser):
         *,
         header_columns: list[str] | None = None,
     ) -> Decimal | None:
-        return self._parse_decimal(
+        return self._parse_transaction_amount(
             self._column_value(
                 columns,
-                {"debit", "withdrawal", "withdrawal amt"},
+                HDFC_DEBIT_TOKENS,
                 default_index=4 if len(columns) >= 7 else 2,
                 header_columns=header_columns,
             )
@@ -224,10 +241,10 @@ class HdfcCsvParser(BaseCsvParser):
         *,
         header_columns: list[str] | None = None,
     ) -> Decimal | None:
-        return self._parse_decimal(
+        return self._parse_transaction_amount(
             self._column_value(
                 columns,
-                {"credit", "deposit", "deposit amt"},
+                HDFC_CREDIT_TOKENS,
                 default_index=5 if len(columns) >= 7 else 3,
                 header_columns=header_columns,
             )
@@ -264,6 +281,59 @@ class HdfcCsvParser(BaseCsvParser):
             return columns[default_index]
 
         return ""
+
+    def _normalize_seven_column_order(
+        self,
+        columns: list[str],
+        header_columns: list[str],
+    ) -> list[str] | None:
+        if len(columns) != 7 or len(header_columns) != 7:
+            return None
+
+        return [
+            self._column_value(
+                columns,
+                {"date", "transaction date"},
+                default_index=None,
+                header_columns=header_columns,
+            ),
+            self._column_value(
+                columns,
+                {"narration", "description"},
+                default_index=None,
+                header_columns=header_columns,
+            ),
+            self._column_value(
+                columns,
+                HDFC_REFERENCE_TOKENS,
+                default_index=None,
+                header_columns=header_columns,
+            ),
+            self._column_value(
+                columns,
+                HDFC_VALUE_DATE_TOKENS,
+                default_index=None,
+                header_columns=header_columns,
+            ),
+            self._column_value(
+                columns,
+                HDFC_DEBIT_TOKENS,
+                default_index=None,
+                header_columns=header_columns,
+            ),
+            self._column_value(
+                columns,
+                HDFC_CREDIT_TOKENS,
+                default_index=None,
+                header_columns=header_columns,
+            ),
+            self._column_value(
+                columns,
+                {"balance", "closing balance"},
+                default_index=None,
+                header_columns=header_columns,
+            ),
+        ]
 
     def _repair_split_narration_columns(
         self,
@@ -335,3 +405,10 @@ class HdfcCsvParser(BaseCsvParser):
             return Decimal(stripped_value)
         except InvalidOperation:
             return None
+
+    def _parse_transaction_amount(self, raw_value: str) -> Decimal | None:
+        amount = self._parse_decimal(raw_value)
+        if amount is None or amount == Decimal("0"):
+            return None
+
+        return amount

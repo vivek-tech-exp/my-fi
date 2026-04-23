@@ -64,6 +64,42 @@ def test_hdfc_parser_detects_header_and_accepts_data_rows() -> None:
     assert transaction.balance == Decimal("1000.00")
 
 
+def test_hdfc_parser_detects_official_amount_header_shape() -> None:
+    parser = get_bank_parser(bank_name=BankName.HDFC, parser_version="v1")
+    inspection_result = parser.inspect_text(
+        file_id=uuid4(),
+        normalized_text=(
+            "\n"
+            "  Date     ,Narration,Value Dat,Debit Amount       ,"
+            "Credit Amount      ,Chq/Ref Number   ,Closing Balance\n"
+            " 02/04/26  ,NEFT CR-UTIB0000052-TRANSFER,02/04/26 ,"
+            "           0.00     ,      135298.07     ,AXNPN09204426074       ,"
+            "      135450.43  \n"
+            " 03/04/26  ,IB BILLPAY DR-HDFCPE-1708,03/04/26 ,"
+            "       20523.76     ,           0.00     ,1775236200366091       ,"
+            "       58423.54  \n"
+        ),
+        delimiter=",",
+        account_id="primary",
+    )
+
+    assert inspection_result.header_detected is True
+    assert inspection_result.raw_rows_recorded == 4
+    assert inspection_result.accepted_rows_recorded == 2
+    assert inspection_result.ignored_rows_recorded == 2
+    assert inspection_result.suspicious_rows_recorded == 0
+    assert inspection_result.transactions_imported == 2
+    credit_transaction = inspection_result.canonical_transactions[0]
+    debit_transaction = inspection_result.canonical_transactions[1]
+    assert credit_transaction.direction == "CREDIT"
+    assert credit_transaction.amount == Decimal("135298.07")
+    assert credit_transaction.value_date is not None
+    assert credit_transaction.value_date.isoformat() == "2026-04-02"
+    assert credit_transaction.reference_number == "AXNPN09204426074"
+    assert debit_transaction.direction == "DEBIT"
+    assert debit_transaction.amount == Decimal("20523.76")
+
+
 def test_kotak_parser_extracts_statement_dates_and_canonical_transactions() -> None:
     parser = get_bank_parser(bank_name=BankName.KOTAK, parser_version="v1")
     inspection_result = parser.inspect_text(
@@ -384,6 +420,7 @@ def test_hdfc_split_narration_repair_rejects_invalid_candidates() -> None:
         "Balance",
     ]
 
+    assert parser._repair_split_narration_columns(["2026-04-01", "POS"], None) is None
     assert (
         parser._repair_split_narration_columns(
             [

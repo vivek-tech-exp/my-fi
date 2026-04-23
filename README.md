@@ -100,9 +100,13 @@ uv run uvicorn app.main:app --reload
 
 Then open:
 
+* Local UI: `http://127.0.0.1:8000/ui`
 * Swagger UI: `http://127.0.0.1:8000/docs`
 * OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
 * Health check: `http://127.0.0.1:8000/health`
+
+The local UI is a lightweight static browser client served by FastAPI. It calls the same API
+endpoints used by Swagger UI; it does not query DuckDB directly or embed backend service logic.
 
 ## Current API Surface
 
@@ -110,6 +114,7 @@ Available now:
 
 * `GET /`
 * `GET /health`
+* `GET /ui`
 * `POST /imports/csv`
 * `POST /imports/csv/batch`
 * `GET /imports`
@@ -206,6 +211,15 @@ Use the inspection APIs from Swagger UI to review imports without querying DuckD
 * `POST /imports/{file_id}/reprocess` re-runs the parser and validation flow from the stored source file
 * `GET /transactions` returns canonical ledger rows with optional filters (bank, account, direction, source file, date range)
 * `GET /transactions/summary?group_by=month` returns monthly canonical ledger aggregates
+
+Use `GET /ui` for the lightweight local console:
+
+* upload multiple CSV files by bank
+* review per-file upload results and import statuses
+* inspect import reports and raw-row audit trails
+* filter canonical transactions by bank, account, direction, and date range
+* review monthly transaction summaries
+* reprocess a stored import and refresh the visible data
 
 Use `POST /imports/csv/batch` from Swagger UI when testing several real CSV files. The
 response reports each file independently, so an empty, oversized, duplicate, or malformed

@@ -37,6 +37,35 @@ def test_docs_endpoint_is_available(client: TestClient) -> None:
     assert "swagger-ui" in response.text.lower()
 
 
+def test_local_ui_shell_is_available(client: TestClient) -> None:
+    response = client.get("/ui")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert 'href="/ui/assets/styles.css"' in response.text
+    assert 'src="/ui/assets/main.js"' in response.text
+
+
+def test_local_ui_static_assets_are_available(client: TestClient) -> None:
+    css_response = client.get("/ui/assets/styles.css")
+    js_response = client.get("/ui/assets/main.js")
+
+    assert css_response.status_code == 200
+    assert "text/css" in css_response.headers["content-type"]
+    assert ".app-shell" in css_response.text
+    assert js_response.status_code == 200
+    assert "javascript" in js_response.headers["content-type"]
+    assert "uploadCsvBatch" in js_response.text
+
+
+def test_local_ui_routes_are_not_added_to_openapi(client: TestClient) -> None:
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    assert "/ui" not in response.json()["paths"]
+    assert "/ui/assets/styles.css" not in response.json()["paths"]
+
+
 def test_openapi_renders_upload_fields_as_swagger_file_inputs(client: TestClient) -> None:
     response = client.get("/openapi.json")
     cached_response = client.get("/openapi.json")
